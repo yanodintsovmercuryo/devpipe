@@ -250,7 +250,7 @@ def _history_menu(history: list[dict], console: Console) -> dict | None:
             task_short = (h.get("task") or "")[:45]
             label = f"{date}  {task_short}"
             if i == idx[0]:
-                toks.append(("fg:cyan bold", f"  »  {label}\n"))
+                toks.append(("fg:cyan", f"  »  {label}\n"))
             else:
                 toks.append(("fg:#888888", f"     {label}\n"))
         toks.append(("", "\n"))
