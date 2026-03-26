@@ -6,6 +6,7 @@ import re
 import shutil
 import sys
 import termios
+import time
 import tty
 from pathlib import Path
 
@@ -19,8 +20,10 @@ from devpipe.runtime.state import STAGE_ORDER
 
 # Partial ESC at end of chunk — carry to next chunk
 _PARTIAL_ESC = re.compile(r"\x1b(?:\[[\x20-\x3f]*)?$")
-# Panel: blank + border + content + border = 4 lines; +1 blank after = 5
-_PANEL_LINES = 5
+# Top panel: blank + border + content + border + blank = 5
+_TOP_PANEL_LINES = 5
+# Bottom panel: separator + status line = 2
+_BOTTOM_PANEL_LINES = 2
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
@@ -84,11 +87,34 @@ def _parse_chunk(text: str) -> tuple[list[str], str]:
     return lines, cur
 
 
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;:]*m", "", text)
+
+
+def _wrap_line(text: str, width: int) -> list[str]:
+    plain = _strip_ansi(text)
+    if width <= 0:
+        return [plain]
+    if not plain:
+        return [""]
+    return [plain[i:i + width] for i in range(0, len(plain), width)]
+
+
 class _RunProgress:
-    def __init__(self, stages: list[str], console: Console) -> None:
+    def __init__(
+        self,
+        stages: list[str],
+        console: Console,
+        runner_name: str,
+        model_name: str | None = None,
+        effort: str | None = None,
+    ) -> None:
         self.stages = stages
         self.current_stage = ""
         self._console = console
+        self.runner_name = runner_name
+        self.model_name = model_name or "?"
+        self.effort = effort or "?"
         self._printed_stage: str | None = None
         self._buf: list[str] = []   # all output lines across all stages
         self._carry = ""            # incomplete ESC from previous chunk
@@ -97,6 +123,8 @@ class _RunProgress:
         self._drawn_n = 0
         self._scroll = 0            # lines from bottom; 0 = follow tail
         self._kbd_buf = b""         # partial keyboard escape sequence
+        self._run_started_at = time.monotonic()
+        self._stage_started_at = self._run_started_at
 
     # ── stage header ─────────────────────────────────────────────────────────
 
@@ -114,6 +142,7 @@ class _RunProgress:
         self._carry = ""
         self._current_line = ""
         self._tick = 0
+        self._stage_started_at = time.monotonic()
         self._draw()
 
     # ── output streaming ─────────────────────────────────────────────────────
@@ -142,7 +171,7 @@ class _RunProgress:
     def on_stdin(self, data: bytes) -> None:
         """Called from PTY loop with raw stdin bytes; process and redraw immediately."""
         self._kbd_buf += data
-        n = max(1, shutil.get_terminal_size().lines - _PANEL_LINES - 1)
+        n = max(1, shutil.get_terminal_size().lines - _TOP_PANEL_LINES - _BOTTOM_PANEL_LINES)
         self._process_kbd(n)
         self._draw()
 
@@ -198,7 +227,16 @@ class _RunProgress:
 
     # ── in-place panel + window ───────────────────────────────────────────────
 
-    def _draw_panel(self, spinner: str, scrolled: bool) -> None:
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        total = max(0, int(seconds))
+        minutes, secs = divmod(total, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours:d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
+
+    def _render_panel(self, spinner: str, scrolled: bool) -> str:
         W = shutil.get_terminal_size().columns
         idx = self.stages.index(self.current_stage) if self.current_stage in self.stages else -1
         parts: list[str] = []
@@ -226,7 +264,7 @@ class _RunProgress:
         pad = max(0, inner - 2 - used)
 
         B = "\x1b[34m"; R = "\x1b[0m"; T = "\x1b[1;34m"
-        sys.stdout.write(
+        return (
             f"\x1b[2K\r\n"
             f"\x1b[2K\r{B}╭{'─'*left_d}{T}{title}{B}{'─'*right_d}╮{R}\n"
             f"\x1b[2K\r{B}│{R} {content}{scroll_tag}{' '*pad} {B}│{R}\n"
@@ -234,8 +272,35 @@ class _RunProgress:
             f"\x1b[2K\r\n"
         )
 
+    def _draw_status_panel(self) -> str:
+        W = shutil.get_terminal_size().columns
+        now = time.monotonic()
+        stage_elapsed = self._format_duration(now - self._stage_started_at)
+        total_elapsed = self._format_duration(now - self._run_started_at)
+
+        B = "\x1b[34m"; R = "\x1b[0m"
+        D = "\x1b[2m"; WHT = "\x1b[97m"
+        chunks = [
+            f"{D}runner{R} {D}{self.runner_name}{R}",
+            f"{D}model{R} {WHT}{self.model_name}{R}",
+            f"{D}effort{R} {WHT}{self.effort}{R}",
+            f"{D}stage{R} {WHT}{stage_elapsed}{R}",
+            f"{D}total{R} {WHT}{total_elapsed}{R}",
+        ]
+        content = "  ".join(chunks)
+        plain = re.sub(r"\x1b\[[0-9;:]*m", "", content)
+        max_content = max(0, W - 4)
+        if len(plain) > max_content:
+            plain = plain[: max(0, max_content - 1)] + ("…" if max_content else "")
+            content = plain
+        pad = max(0, W - 4 - len(plain))
+        return (
+            f"\x1b[2K\r{B}{'─' * W}{R}\n"
+            f"\x1b[2K\r  {content}{' '*pad}"
+        )
+
     def _draw(self) -> None:
-        n = max(1, shutil.get_terminal_size().lines - _PANEL_LINES - 1)
+        n = max(1, shutil.get_terminal_size().lines - _TOP_PANEL_LINES - _BOTTOM_PANEL_LINES)
         w = max(shutil.get_terminal_size().columns - 4, 20)
 
         self._process_input(n)
@@ -243,24 +308,30 @@ class _RunProgress:
         spinner = _SPINNER[self._tick % len(_SPINNER)]
 
         display = self._buf + ([self._current_line] if self._current_line.strip() else [])
-        total = len(display)
+        wrapped: list[str] = []
+        for line in display:
+            wrapped.extend(_wrap_line(line, w))
+
+        total = len(wrapped)
         # clamp scroll so it can't exceed available lines
         max_scroll = max(0, total - n)
         self._scroll = min(self._scroll, max_scroll)
 
         if self._scroll > 0:
             end = total - self._scroll
-            visible = display[max(0, end - n):end]
+            visible = wrapped[max(0, end - n):end]
         else:
-            visible = display[-n:]
+            visible = wrapped[-n:]
 
-        sys.stdout.write("\x1b[H")  # cursor to top-left
-        out: list[str] = []
-        self._draw_panel(spinner, scrolled=self._scroll > 0)
+        out: list[str] = ["\x1b[H", self._render_panel(spinner, scrolled=self._scroll > 0)]
 
         for line in visible:
             out.append(f"\x1b[2K\r{line}\n")
 
+        for _ in range(n - len(visible)):
+            out.append("\x1b[2K\r\n")
+
+        out.append(self._draw_status_panel())
         out.append("\x1b[J\x1b[0m")
         sys.stdout.write("".join(out))
         sys.stdout.flush()
@@ -417,8 +488,14 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write("\x1b[?1000h\x1b[?1006h")  # enable mouse reporting (SGR mode)
         sys.stdout.flush()
 
-        progress = _RunProgress(active_stages, console)
         runner = app.runners[config.runner]
+        progress = _RunProgress(
+            active_stages,
+            console,
+            runner_name=config.runner,
+            model_name=getattr(runner, "model_name", None),
+            effort=getattr(runner, "effort", None),
+        )
         runner.output_callback = progress.on_output    # type: ignore[union-attr]
         runner.stdin_callback = progress.on_stdin      # type: ignore[union-attr]
 

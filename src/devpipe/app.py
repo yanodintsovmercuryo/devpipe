@@ -177,8 +177,18 @@ def build_default_app(base_dir: str | Path) -> OrchestratorApp:
     codex_config = runner_config.get("codex", {})
     claude_config = runner_config.get("claude", {})
     runners = {
-        "codex": CodexRunner(command=codex_config.get("command", ["codex"]), timeout=int(codex_config.get("timeout", 300))),
-        "claude": ClaudeRunner(command=claude_config.get("command", ["claude"]), timeout=int(claude_config.get("timeout", 300))),
+        "codex": CodexRunner(
+            command=codex_config.get("command", ["codex"]),
+            timeout=int(codex_config.get("timeout", 300)),
+            model_name=codex_config.get("model"),
+            effort=codex_config.get("effort"),
+        ),
+        "claude": ClaudeRunner(
+            command=claude_config.get("command", ["claude"]),
+            timeout=int(claude_config.get("timeout", 300)),
+            model_name=claude_config.get("model"),
+            effort=claude_config.get("effort"),
+        ),
     }
 
     namespace_map_path = base / "config" / "namespace-map.yaml"

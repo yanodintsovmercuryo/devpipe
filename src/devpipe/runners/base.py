@@ -177,6 +177,8 @@ class BaseCliRunner:
     forward_to_tty: bool = False
     output_callback: "Callable[[str], None] | None" = None
     stdin_callback: "Callable[[bytes], None] | None" = None
+    model_name: str | None = None
+    effort: str | None = None
 
     def build_prompt(self, envelope: TaskEnvelope) -> str:
         return (
