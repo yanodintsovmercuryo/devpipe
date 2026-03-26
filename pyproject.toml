@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=58"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devpipe"
+version = "0.1.0"
+description = "Event-driven orchestrator for acquiring delivery workflows"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "PyYAML>=6.0",
+  "jsonschema>=4.0",
+  "pocketflow>=0.0.3",
+]
+
+[project.scripts]
+devpipe = "devpipe.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

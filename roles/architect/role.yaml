@@ -1,0 +1,9 @@
+name: architect
+runner: codex
+allowed_inputs:
+  - task
+  - jira
+  - shared_context
+produces:
+  - architecture_plan
+retry_limit: 2

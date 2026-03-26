@@ -1,0 +1,8 @@
+runners:
+  codex:
+    command: ["codex"]
+    timeout: 300
+  claude:
+    command: ["claude"]
+    timeout: 300
+

@@ -1,0 +1,38 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+
+
+@dataclass
+class RoleDefinition:
+    name: str
+    runner: str
+    prompt: str
+    output_schema: dict[str, object]
+    allowed_inputs: list[str]
+    produced_outputs: list[str]
+    retry_limit: int
+
+
+def load_roles(roles_dir: str | Path) -> dict[str, RoleDefinition]:
+    base = Path(roles_dir)
+    roles: dict[str, RoleDefinition] = {}
+    for role_dir in sorted(path for path in base.iterdir() if path.is_dir() and not path.name.startswith(".")):
+        role_meta = yaml.safe_load((role_dir / "role.yaml").read_text(encoding="utf-8"))
+        prompt = (role_dir / "prompt.md").read_text(encoding="utf-8") if (role_dir / "prompt.md").exists() else ""
+        schema = json.loads((role_dir / "output.schema.json").read_text(encoding="utf-8")) if (role_dir / "output.schema.json").exists() else {}
+        definition = RoleDefinition(
+            name=role_meta["name"],
+            runner=role_meta.get("runner", "codex"),
+            prompt=prompt,
+            output_schema=schema,
+            allowed_inputs=list(role_meta.get("allowed_inputs", [])),
+            produced_outputs=list(role_meta.get("produces", [])),
+            retry_limit=int(role_meta.get("retry_limit", 1)),
+        )
+        roles[definition.name] = definition
+    return roles

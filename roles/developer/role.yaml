@@ -1,0 +1,9 @@
+name: developer
+runner: codex
+allowed_inputs:
+  - task
+  - architecture_plan
+  - shared_context
+produces:
+  - code_changes
+retry_limit: 2

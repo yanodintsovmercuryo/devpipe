@@ -1,0 +1,10 @@
+name: qa_local
+runner: codex
+allowed_inputs:
+  - task
+  - tests
+  - code_changes
+  - shared_context
+produces:
+  - qa_report
+retry_limit: 2

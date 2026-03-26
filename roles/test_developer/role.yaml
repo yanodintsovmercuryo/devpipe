@@ -1,0 +1,9 @@
+name: test_developer
+runner: codex
+allowed_inputs:
+  - task
+  - code_changes
+  - shared_context
+produces:
+  - tests
+retry_limit: 2

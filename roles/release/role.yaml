@@ -1,0 +1,9 @@
+name: release
+runner: codex
+allowed_inputs:
+  - qa_report
+  - namespace
+  - shared_context
+produces:
+  - release_metadata
+retry_limit: 1

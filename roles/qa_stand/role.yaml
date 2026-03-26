@@ -1,0 +1,9 @@
+name: qa_stand
+runner: codex
+allowed_inputs:
+  - release_metadata
+  - dataset
+  - shared_context
+produces:
+  - stand_verification
+retry_limit: 1
