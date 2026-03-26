@@ -14,6 +14,7 @@ class TagParam:
     description: str = ""
     required: bool = False
     available: list[str] = field(default_factory=list)
+    multi: bool = False
 
 
 @dataclass
@@ -43,6 +44,7 @@ def _load_params_file(path: Path) -> list[TagParam]:
             description=p.get("description", ""),
             required=p.get("required", False),
             available=[str(v) for v in p.get("available", [])],
+            multi=bool(p.get("multi", False)),
         )
         for p in data.get("params", [])
     ]

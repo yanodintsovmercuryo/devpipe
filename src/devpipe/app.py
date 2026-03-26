@@ -26,7 +26,7 @@ class RunConfig:
     namespace: str | None = None
     service: str | None = None
     tags: list[str] | None = None
-    extra_params: dict[str, str] | None = None
+    extra_params: dict[str, str | list[str]] | None = None
     first_role: str | None = None
     last_role: str | None = None
 
