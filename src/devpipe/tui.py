@@ -146,7 +146,7 @@ def run_tui(base_dir: Path) -> RunConfig | None:
         if available_tag_names:
             choices.append("Set tags")
         for _tag_name, param, _available, _default in tag_params_meta:
-            choices.append(f"Set {param.key}  [{_tag_name}]")
+            choices.append(f"Set {param.key}")
         choices.extend(["Set first role", "Set last role"])
         if cfg["task"]:
             choices.extend([Separator(), "▶  Run"])
@@ -213,9 +213,8 @@ def run_tui(base_dir: Path) -> RunConfig | None:
                     for k in removed_keys:
                         cfg["extra_params"].pop(k, None)
 
-        elif choice.startswith("Set ") and " [" in choice:
-            # Tag-specific param: "Set dataset  [exchange_buy]"
-            param_key = choice[4:choice.index("  [")]
+        elif choice.startswith("Set ") and any(choice == f"Set {p.key}" for _, p, _, _ in tag_params_meta):
+            param_key = choice[4:]
             meta = next(((t, p, av, df) for t, p, av, df in tag_params_meta if p.key == param_key), None)
             if meta:
                 _tag_name, param, available, default = meta

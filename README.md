@@ -121,43 +121,74 @@ devpipe run --task "..." --runner codex \
 
 ## Теги
 
-Теги расширяют промпты ролей дополнительными правилами и объявляют параметры, специфичные для своего сценария.
+Тег делает две вещи:
+
+1. **Добавляет правила к промптам ролей** — файлы вида `DEVELOPER_RULES.md`, `QA_STAND_RULES.md` и т.д. в директории тега автоматически дописываются к промпту соответствующей роли когда тег активен.
+
+2. **Объявляет входные параметры** — в `tag.yaml` тег описывает какие значения ему нужны (например `dataset`). Эти значения появляются в TUI как отдельные пункты меню, а при запуске попадают в `release_context` — и AI видит их в своём промпте.
+
+### Как это работает на примере `exchange_buy`
+
+Тег объявляет параметр `dataset` в `tag.yaml`. При запуске значение `s4-3ds` попадает в контекст роли `qa_stand`:
+
+```
+Context: {
+  ...
+  "release_context": {
+    "target_branch": "u1",
+    "dataset": "s4-3ds",
+    ...
+  }
+}
+```
+
+В `QA_STAND_RULES.md` написано что с этим делать:
+
+```markdown
+Run the `/pw-exchange-buy` skill:
+
+    /pw-exchange-buy \
+      --stand {release_context.target_branch} \
+      --dataset {release_context.dataset}
+```
+
+AI читает правила, берёт значения из контекста и выполняет сценарий.
 
 ### Встроенные теги
 
-| Тег | Роли | Параметры |
-|-----|------|-----------|
-| `go` | `developer`, `test_developer` | — |
-| `exchange_buy` | `qa_stand` | `dataset` |
+| Тег | Правила для ролей | Параметры |
+|-----|-------------------|-----------|
+| `go` | `DEVELOPER_RULES.md`, `TEST_DEVELOPER_RULES.md` | — |
+| `exchange_buy` | `QA_STAND_RULES.md` | `dataset` |
 
-### Структура тега
+### Создать новый тег
 
 ```
 tags/
-  exchange_buy/
-    tag.yaml              # метаданные и параметры
-    QA_STAND_RULES.md     # добавляется к промпту qa_stand
+  my_tag/
+    tag.yaml           # объявить параметры (опционально)
+    QA_STAND_RULES.md  # правила для qa_stand (опционально)
+    DEVELOPER_RULES.md # правила для developer (опционально)
 ```
 
-**`tag.yaml`:**
+**`tag.yaml`** (если тегу нужны параметры):
 ```yaml
-description: Playwright exchange buy scenario for qa_stand
+description: Что делает этот тег
 
 params:
-  - key: dataset
-    description: Test dataset for the exchange buy flow
+  - key: my_param
+    description: Описание параметра
     required: true
-    available:
-      - s4-3ds
-      - s4-no3ds
-      - s4-3ds-recurrent
+    available:           # список для TUI (опционально)
+      - value1
+      - value2
 ```
 
-Каждый тег может объявить любые параметры. TUI показывает их динамически когда тег выбран, CLI принимает их через `--param key=value`.
+Если параметры не нужны — `tag.yaml` можно не создавать, достаточно md-файлов с правилами.
 
 ### Кастомные правила проекта
 
-Файлы в `.devpipe/` добавляются к промптам соответствующих ролей:
+Файлы в `.devpipe/` добавляются к промптам ролей независимо от тегов:
 
 ```
 .devpipe/
