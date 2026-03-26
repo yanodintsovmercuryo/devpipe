@@ -22,8 +22,7 @@ class RunConfig:
     task_id: str | None
     task: str
     runner: str
-    deploy_branch: str | None = None
-    stand: str | None = None
+    target_branch: str | None = None
     dataset: str | None = None
     namespace: str | None = None
     service: str | None = None
@@ -74,8 +73,8 @@ class OrchestratorApp:
         if needs_namespace:
             if config.namespace:
                 namespace = config.namespace
-            elif self.namespace_map and config.service and config.stand:
-                namespace = self.namespace_map.resolve(service=config.service, stand=config.stand)
+            elif self.namespace_map and config.service and config.target_branch:
+                namespace = self.namespace_map.resolve(service=config.service, target_branch=config.target_branch)
             else:
                 raise ValueError("Namespace must be provided explicitly or via namespace mapping")
         else:
@@ -85,8 +84,7 @@ class OrchestratorApp:
         state = PipelineState.create(task_id=task_id, task_text=config.task, selected_runner=config.runner)
         state.release_context.update(
             {
-                "deploy_branch": config.deploy_branch,
-                "stand": config.stand,
+                "target_branch": config.target_branch,
                 "dataset": config.dataset,
                 "namespace": namespace,
                 "service": config.service,

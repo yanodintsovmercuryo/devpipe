@@ -20,7 +20,7 @@ class CommaSeparatedTags(argparse.Action):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="devpipe", description="devpipe")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=False)
 
     run_parser = subparsers.add_parser("run", help="Run full pipeline")
     run_parser.add_argument("--task-id", default=None)
@@ -28,8 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--runner", required=True, choices=["codex", "claude"])
     run_parser.add_argument("--roles-dir", default=None)
     run_parser.add_argument("--runs-dir", default=None)
-    run_parser.add_argument("--deploy-branch")
-    run_parser.add_argument("--stand")
+    run_parser.add_argument("--target-branch")
     run_parser.add_argument("--dataset")
     run_parser.add_argument("--namespace")
     run_parser.add_argument("--service", default="acquiring")
@@ -40,12 +39,25 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser = subparsers.add_parser("inspect", help="Inspect available roles")
     inspect_parser.add_argument("--roles-dir", required=True)
 
+    subparsers.add_parser("tui", help="Interactive TUI (default when no subcommand given)")
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command in (None, "tui"):
+        from devpipe.tui import run_tui
+        base_dir = Path(args.roles_dir).resolve().parents[0] if getattr(args, "roles_dir", None) else Path(__file__).resolve().parents[2]
+        config = run_tui(base_dir)
+        if config is None:
+            return 0
+        app = build_default_app(base_dir)
+        state = app.run(config)
+        print(json.dumps({"run_id": state.run_id, "status": state.status, "current_stage": state.current_stage}))
+        return 0
 
     if args.command == "inspect":
         roles = load_roles(args.roles_dir)
@@ -62,8 +74,7 @@ def main(argv: list[str] | None = None) -> int:
             task_id=args.task_id,
             task=args.task,
             runner=args.runner,
-            deploy_branch=args.deploy_branch,
-            stand=args.stand,
+            target_branch=args.target_branch,
             dataset=args.dataset,
             namespace=args.namespace,
             service=args.service,

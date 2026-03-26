@@ -1,0 +1,24 @@
+# devpipe project config
+# Placed in .devpipe/config.yaml at the root of the project you're working in.
+
+defaults:
+  runner: codex
+  service: acquiring
+  # dataset: s4-3ds
+  # target_branch: develop
+  # namespace: acquiring-u1
+  # tags:
+  #   - go
+
+available:
+  target_branch: []
+    # - develop
+    # - main
+
+  dataset: []
+    # - s4-3ds
+    # - s4-no3ds
+
+  namespace: []
+    # - acquiring-u1
+    # - acquiring-u1-1
