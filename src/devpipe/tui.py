@@ -36,6 +36,37 @@ def _effective_last(cfg: dict) -> str:
     return "qa_stand" if cfg["target_branch"] else "qa_local"
 
 
+def _checkbox_with_apply(
+    prompt: str, names: list[str], selected: set[str], style, console: Console
+) -> list[str] | None:
+    """Tag checkbox: Enter toggles, 'Apply' confirms."""
+    current = set(selected)
+    cursor: str = names[0] if names else "__apply__"
+    console.clear()
+    while True:
+        items = []
+        for name in names:
+            if name in current:
+                title = [("fg:black bg:cyan bold", f" {name} ")]
+            else:
+                title = name
+            items.append(questionary.Choice(title=title, value=name))
+        items.append(Separator())
+        items.append(questionary.Choice(title="Apply", value="__apply__"))
+
+        val = questionary.select(prompt, choices=items, style=style, default=cursor).ask()
+        console.clear()
+        if val is None:
+            return None
+        if val == "__apply__":
+            return [n for n in names if n in current]
+        cursor = val
+        if val in current:
+            current.discard(val)
+        else:
+            current.add(val)
+
+
 def _select_or_text(prompt: str, options: list[str], default: str, style) -> str | None:
     if options:
         choices = options + ["(other...)"]
@@ -84,7 +115,7 @@ def _render_summary(cfg: dict, tag_params_meta: list, console: Console) -> None:
 _STYLE = questionary.Style([
     ("selected", "fg:cyan bold"),
     ("pointer", "fg:cyan bold"),
-    ("highlighted", "fg:cyan"),
+    ("highlighted", "fg:cyan noreverse"),
     ("answer", "fg:green bold"),
     ("question", "bold"),
 ])
@@ -112,8 +143,13 @@ def run_tui(base_dir: Path) -> RunConfig | None:
     }
 
     def _load_tag_params() -> list:
+        eff_first = cfg["first_role"] or "architect"
+        eff_last = _effective_last(cfg)
+        first_idx = STAGE_ORDER.index(eff_first)
+        last_idx = STAGE_ORDER.index(eff_last)
+        active_roles = set(STAGE_ORDER[first_idx: last_idx + 1])
         tag_defs = load_tag_definitions(cfg["tags"])
-        return collect_params(tag_defs, project_cfg.tag_params)
+        return collect_params(tag_defs, project_cfg.tag_params, active_roles)
 
     def _init_tag_param_defaults(tag_params_meta: list) -> None:
         for _tag_name, param, _available, default in tag_params_meta:
@@ -191,10 +227,8 @@ def run_tui(base_dir: Path) -> RunConfig | None:
 
         elif choice == "Set tags":
             prev_tags = set(cfg["tags"])
-            safe_default = [t for t in cfg["tags"] if t in available_tag_names]
-            val = questionary.checkbox(
-                "Tags:", choices=available_tag_names, default=safe_default, style=_STYLE,
-            ).ask()
+            safe_selected = {t for t in cfg["tags"] if t in available_tag_names}
+            val = _checkbox_with_apply("Tags:", available_tag_names, safe_selected, _STYLE, console)
             if val is not None:
                 cfg["tags"] = val
                 # Init defaults for newly added tags
@@ -214,7 +248,8 @@ def run_tui(base_dir: Path) -> RunConfig | None:
             if meta:
                 _tag_name, param, available, default = meta
                 current = cfg["extra_params"].get(param.key, default)
-                val = _select_or_text(f"{param.key}:", available, current, _STYLE)
+                label = f"{param.key}" + (f" — {param.description}" if param.description else "") + ":"
+                val = _select_or_text(label, available, current, _STYLE)
                 if val is not None:
                     cfg["extra_params"][param.key] = val.strip()
 

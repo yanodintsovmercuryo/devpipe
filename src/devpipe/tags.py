@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-BUILTIN_TAGS_DIR = Path(__file__).resolve().parents[3] / "tags"
+BUILTIN_TAGS_DIR = Path(__file__).resolve().parents[2] / "tags"
 
 
 @dataclass
@@ -42,7 +42,7 @@ def _load_params_file(path: Path) -> list[TagParam]:
             key=p["key"],
             description=p.get("description", ""),
             required=p.get("required", False),
-            available=p.get("available", []),
+            available=[str(v) for v in p.get("available", [])],
         )
         for p in data.get("params", [])
     ]
@@ -96,17 +96,24 @@ def load_tag_definitions(
 def collect_params(
     tag_definitions: dict[str, TagDefinition],
     project_tag_params: dict[str, dict],
+    active_roles: set[str] | None = None,
 ) -> list[tuple[str, TagParam, list[str], str]]:
-    """Returns list of (tag_name, param, available_values, default_value)."""
+    """Returns list of (tag_name, param, available_values, default_value).
+
+    If active_roles is given, only params defined under those roles are included.
+    """
     seen: set[str] = set()
     result = []
     for tag_name, defn in tag_definitions.items():
         overrides = project_tag_params.get(tag_name, {})
-        for param in defn.all_params:
-            if param.key in seen:
+        for role, params in defn.params_by_role.items():
+            if active_roles is not None and role not in active_roles:
                 continue
-            seen.add(param.key)
-            available = overrides.get("available", {}).get(param.key, param.available)
-            default = str(overrides.get("defaults", {}).get(param.key, available[0] if available else ""))
-            result.append((tag_name, param, available, default))
+            for param in params:
+                if param.key in seen:
+                    continue
+                seen.add(param.key)
+                available = overrides.get("available", {}).get(param.key, param.available)
+                default = str(overrides.get("defaults", {}).get(param.key, available[0] if available else ""))
+                result.append((tag_name, param, available, default))
     return result
