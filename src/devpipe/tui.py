@@ -32,6 +32,7 @@ InquirerControl._get_choice_tokens = _patched_get_choice_tokens  # type: ignore[
 
 
 from devpipe.app import RunConfig
+from devpipe.history import load_history, save_run
 from devpipe.project_config import load_project_config
 from devpipe.runtime.state import STAGE_ORDER
 from devpipe.tags import collect_params, load_available_tags, load_tag_definitions
@@ -237,6 +238,36 @@ def run_tui(base_dir: Path) -> RunConfig | None:
         "last_role": "",
     }
 
+    history = load_history()
+    if history:
+        console.clear()
+        h_choices = []
+        for i, h in enumerate(history[:10]):
+            task_short = (h.get("task") or "")[:48]
+            label = f"{h.get('date', '')}  {h.get('task_id') or '—':>10}  {task_short}"
+            h_choices.append(questionary.Choice(title=label, value=i))
+        h_choices.append(Separator(" "))
+        h_choices.append(questionary.Choice(title="Start fresh", value=-1))
+        picked = questionary.select(
+            "Load from history:", choices=h_choices, style=_STYLE, qmark="",
+        ).ask()
+        if picked is None:
+            return None
+        if picked >= 0:
+            h = history[picked]
+            cfg.update({
+                "task":          h.get("task", ""),
+                "task_id":       h.get("task_id", "") or _task_id_from_branch(_git_branch()),
+                "runner":        h.get("runner", cfg["runner"]),
+                "target_branch": h.get("target_branch", ""),
+                "service":       h.get("service", cfg["service"]),
+                "namespace":     h.get("namespace", ""),
+                "tags":          [t for t in (h.get("tags") or []) if t in available_tag_names],
+                "extra_params":  dict(h.get("extra_params") or {}),
+                "first_role":    h.get("first_role", ""),
+                "last_role":     h.get("last_role", ""),
+            })
+
     def _load_tag_params() -> list:
         eff_first = cfg["first_role"] or "architect"
         eff_last = _effective_last(cfg)
@@ -409,6 +440,7 @@ def run_tui(base_dir: Path) -> RunConfig | None:
         elif choice == "▶ Run":
             if not cfg["task"]:
                 continue
+            save_run({**cfg, "last_role": _effective_last(cfg)})
             return RunConfig(
                 task_id=cfg["task_id"] or None,
                 task=cfg["task"],
