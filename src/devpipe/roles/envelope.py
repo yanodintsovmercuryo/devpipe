@@ -49,11 +49,6 @@ def compose_role_instructions(
     root = Path(project_root)
     sections: list[str] = []
 
-    # Project-level rules: .devpipe/<role>/rules.md
-    project_rules = _read(root / ".devpipe" / role_name / "rules.md")
-    if project_rules:
-        sections.append(f"## Project Rules\n\n{project_rules}")
-
     for tag in tags or []:
         # Custom tag rules: .devpipe/tags/<tag>/<role>/rules.md
         custom = _read(root / ".devpipe" / "tags" / tag / role_name / "rules.md")
