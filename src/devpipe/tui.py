@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -173,6 +174,128 @@ def _select_or_text(prompt: str, options: list[str], default: str, style) -> str
     return questionary.text(prompt, default=default, style=style, qmark="").ask()
 
 
+def _history_menu(history: list[dict], console: Console) -> dict | None:
+    """Show history list with live panel preview on hover. Enter runs immediately."""
+    from prompt_toolkit import Application
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import HSplit, Layout, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+
+    entries = history[:20]
+    if not entries:
+        return None
+
+    idx = [0]
+    result: list[dict | None] = [None]
+
+    def _panel_tokens() -> list[tuple[str, str]]:
+        h = entries[idx[0]]
+        eff_first = h.get("first_role") or "architect"
+        eff_last = h.get("last_role") or "qa_stand"
+        extra = h.get("extra_params") or {}
+        tags = h.get("tags") or []
+
+        rows: list[tuple[str, str]] = [
+            ("date", h.get("date") or ""),
+            ("task", h.get("task") or "(empty)"),
+            ("task-id", h.get("task_id") or "—"),
+            ("runner", h.get("runner") or ""),
+            ("target-branch", h.get("target_branch") or "none"),
+            ("service", h.get("service") or ""),
+            ("tags", ", ".join(tags) if tags else "none"),
+        ]
+        for k, v in extra.items():
+            display = ", ".join(v) if isinstance(v, list) else str(v)
+            rows.append((f"  {k}", display))
+        rows.append(("roles", f"{eff_first} → {eff_last}"))
+
+        key_w = max(len(r[0]) for r in rows) + 2
+        # W = box width (chars between ╭ and ╮ inclusive = terminal - 2 space prefix)
+        W = shutil.get_terminal_size().columns - 2
+        # inner content between │ borders = W - 2
+        # line: "  │" + "  " + kstr + " " + vstr + " "*pad + " " + "│"
+        # so: 2 + key_w + 1 + len(vstr) + pad + 1 = W - 2  →  pad = W - 6 - key_w - len(vstr)
+        max_v_base = W - 6 - key_w
+
+        B = "fg:#4488cc"
+        toks: list[tuple[str, str]] = []
+        ttl = " devpipe "
+        left_d = (W - 2 - len(ttl)) // 2
+        right_d = W - 2 - len(ttl) - left_d
+        toks.append((B, "  ╭" + "─" * left_d))
+        toks.append(("bold fg:cyan", ttl))
+        toks.append((B, "─" * right_d + "╮\n"))
+        toks.append((B, "  │")); toks.append(("", " " * (W - 2))); toks.append((B, "│\n"))
+        for key, val in rows:
+            kstr = key.ljust(key_w)
+            vstr = str(val)
+            if len(vstr) > max_v_base:
+                vstr = vstr[:max_v_base - 1] + "…"
+            pad = max(0, max_v_base - len(vstr))
+            toks += [
+                (B, "  │  "),
+                ("bold fg:#888888", kstr),
+                ("", " " + vstr + " " * pad + " "),
+                (B, "│\n"),
+            ]
+        toks.append((B, "  │")); toks.append(("", " " * (W - 2))); toks.append((B, "│\n"))
+        toks.append((B, "  ╰" + "─" * (W - 2) + "╯\n"))
+        toks.append(("", "\n"))
+        return toks
+
+    def _list_tokens() -> list[tuple[str, str]]:
+        toks: list[tuple[str, str]] = []
+        for i, h in enumerate(entries):
+            date = h.get("date", "")
+            task_short = (h.get("task") or "")[:45]
+            label = f"{date}  {task_short}"
+            if i == idx[0]:
+                toks.append(("fg:cyan bold", f"  »  {label}\n"))
+            else:
+                toks.append(("fg:#888888", f"     {label}\n"))
+        toks.append(("", "\n"))
+        toks.append(("fg:#555555", "  Enter — run   Esc — cancel\n"))
+        return toks
+
+    kb = KeyBindings()
+
+    @kb.add("up")
+    def _(event):  # type: ignore[misc]
+        idx[0] = max(0, idx[0] - 1)
+
+    @kb.add("down")
+    def _(event):  # type: ignore[misc]
+        idx[0] = min(len(entries) - 1, idx[0] + 1)
+
+    @kb.add("enter")
+    def _(event):  # type: ignore[misc]
+        result[0] = entries[idx[0]]
+        event.app.exit()
+
+    @kb.add("escape")
+    @kb.add("c-c")
+    def _(event):  # type: ignore[misc]
+        event.app.exit()
+
+    layout = Layout(
+        HSplit([
+            Window(
+                FormattedTextControl(_panel_tokens, focusable=False, show_cursor=False),
+                dont_extend_height=True,
+            ),
+            Window(
+                FormattedTextControl(_list_tokens, focusable=True, show_cursor=False),
+                dont_extend_height=True,
+            ),
+        ])
+    )
+
+    console.clear()
+    app = Application(layout=layout, key_bindings=kb, full_screen=False, mouse_support=False)
+    app.run()
+    return result[0]
+
+
 def _render_summary(cfg: dict, tag_params_meta: list, console: Console) -> None:
     eff_first = cfg["first_role"] or "architect"
     eff_last = _effective_last(cfg)
@@ -276,6 +399,7 @@ def run_tui(base_dir: Path) -> RunConfig | None:
     tag_params_meta = _load_tag_params()
     _init_tag_param_defaults(tag_params_meta)
 
+    menu_cursor: str | None = None
     while True:
         tag_params_meta = _load_tag_params()
         console.clear()
@@ -302,14 +426,17 @@ def run_tui(base_dir: Path) -> RunConfig | None:
         choices.append(_c("Set last role",  "Last pipeline stage to run (default: qa_stand if target branch set, else qa_local)"))
         choices.append(Separator(" "))
         history = load_history()
-        if history:
-            choices.append(_c("Run from history", "Re-run a previous pipeline invocation"))
+        hist_desc = "\n\n  Re-run a previous pipeline invocation" if history else "\n\n  No history yet — complete a run first"
+        choices.append(questionary.Choice("▶ Run from history", description=hist_desc))
         run_desc = "\n\n  Start the pipeline with current configuration" if cfg["task"] else "\n\n  Task is required — use Set task first"
         choices.append(questionary.Choice("▶ Run", description=run_desc))
 
-        choice = questionary.select("", choices=choices, style=_STYLE, use_shortcuts=False, qmark="").ask()
+        valid_values = [c.value if isinstance(c, questionary.Choice) else c for c in choices if not isinstance(c, Separator)]
+        default_cursor = menu_cursor if menu_cursor in valid_values else None
+        choice = questionary.select("", choices=choices, style=_STYLE, use_shortcuts=False, qmark="", default=default_cursor).ask()
         if choice is None:
             return None
+        menu_cursor = choice
 
         if choice == "Set task":
             _input_header()
@@ -425,28 +552,10 @@ def run_tui(base_dir: Path) -> RunConfig | None:
             if val is not None:
                 cfg["last_role"] = val
 
-        elif choice == "Run from history":
-            _input_header()
-            h_choices = []
-            for h in history[:20]:
-                date = h.get("date", "")
-                task_short = (h.get("task") or "")[:40]
-                label = f"{date}  {task_short}"
-                extra = h.get("extra_params") or {}
-                eff_first = h.get("first_role") or "architect"
-                eff_last = h.get("last_role") or "qa_stand"
-                desc = (
-                    f"\n\n"
-                    f"  task:    {h.get('task') or ''}\n"
-                    f"  runner:  {h.get('runner') or ''}   target: {h.get('target_branch') or '—'}\n"
-                    f"  tags:    {', '.join(h.get('tags') or [])}\n"
-                    + (f"  params:  {', '.join(f'{k}={v}' for k, v in extra.items())}\n" if extra else "")
-                    + f"  roles:   {eff_first} → {eff_last}"
-                )
-                h_choices.append(questionary.Choice(title=label, value=h, description=desc))
-            h_choices.append(Separator(" "))
-            h_choices.append(questionary.Choice(title="Cancel", value=None))
-            picked = questionary.select("History:", choices=h_choices, style=_STYLE, qmark="").ask()
+        elif choice == "▶ Run from history":
+            if not history:
+                continue
+            picked = _history_menu(history, console)
             if picked:
                 return RunConfig(
                     task_id=picked.get("task_id") or None,
