@@ -57,6 +57,9 @@ class OrchestratorApp:
         self.project_root = Path(project_root) if project_root is not None else None
 
     def run(self, config: RunConfig) -> PipelineState:
+        from devpipe.history import save_run
+        save_run(config)
+
         first_role = config.first_role or STAGE_ORDER[0]
         last_role = config.last_role or STAGE_ORDER[-1]
 
