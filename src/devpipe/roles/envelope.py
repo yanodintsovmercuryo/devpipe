@@ -51,7 +51,8 @@ def compose_role_instructions(
 
     for tag in tags or []:
         # Custom tag rules: .devpipe/tags/<tag>/<role>/rules.md
-        custom = _read(root / ".devpipe" / "tags" / tag / role_name / "rules.md")
+        custom_path = root / ".devpipe" / "tags" / tag / role_name / "rules.md"
+        custom = _read(custom_path)
         if custom:
             sections.append(f"## Tag Rules: {tag}\n\n{custom}")
             continue

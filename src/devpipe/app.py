@@ -184,5 +184,5 @@ def build_default_app(base_dir: str | Path) -> OrchestratorApp:
         runners=runners,
         runs_dir=base / "runs",
         namespace_map=namespace_map,
-        project_root=base,
+        project_root=Path.cwd(),
     )

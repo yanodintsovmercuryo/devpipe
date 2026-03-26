@@ -18,9 +18,13 @@ class CodexRunner(BaseCliRunner):
 
     def __init__(self, command: list[str] | None = None, **kwargs) -> None:
         kwargs.setdefault("use_pty", True)
+        kwargs.setdefault("forward_to_tty", False)
         super().__init__(command=command or ["codex"], **kwargs)
 
     def _get_command_and_input(self, envelope: TaskEnvelope) -> tuple[list[str], str]:
         prompt = self.build_prompt(envelope)
-        command = self.command + ["--full-auto", prompt]
+        command = self.command + [
+            "--dangerously-bypass-approvals-and-sandbox",
+            prompt,
+        ]
         return command, ""  # empty stdin → EOF sent immediately via PTY

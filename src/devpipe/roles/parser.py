@@ -22,9 +22,30 @@ class OutputParser:
             raise OutputParseError(str(exc)) from exc
         return payload
 
+    _ANSI_RE = re.compile(r"\x1b(?:\[[0-9;:?>=<!]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|.)")
+
     def _extract_json(self, transcript: str) -> dict[str, object]:
-        fenced = re.search(r"```json\s*(\{.*?\})\s*```", transcript, re.DOTALL)
-        raw = fenced.group(1) if fenced else transcript.strip()
+        clean = self._ANSI_RE.sub("", transcript)
+
+        # 1. Fenced ```json block
+        fenced = re.search(r"```json\s*(\{.*?\})\s*```", clean, re.DOTALL)
+        if fenced:
+            raw = fenced.group(1)
+            return self._parse_obj(raw)
+
+        # 2. Last JSON object in the output (rightmost { ... })
+        for m in reversed(list(re.finditer(r"\{", clean))):
+            candidate = clean[m.start():]
+            try:
+                data = json.loads(candidate)
+                if isinstance(data, dict):
+                    return data
+            except json.JSONDecodeError:
+                pass
+
+        raise OutputParseError("No JSON object found in runner output")
+
+    def _parse_obj(self, raw: str) -> dict[str, object]:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:

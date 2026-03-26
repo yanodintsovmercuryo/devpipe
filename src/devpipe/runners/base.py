@@ -4,6 +4,7 @@ import os
 import pty
 import select
 import subprocess
+import sys
 import termios
 import time
 from dataclasses import dataclass, field
@@ -43,6 +44,7 @@ def _run_with_pty(
     timeout: int,
     env: dict[str, str] | None,
     output_callback: "Callable[[str], None] | None" = None,
+    forward_to_tty: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run command with PTY for stdin+stdout so all TTY checks pass.
 
@@ -110,6 +112,8 @@ def _run_with_pty(
                 data = os.read(master_fd, 4096)
                 if data:
                     chunks.append(data)
+                    if forward_to_tty:
+                        os.write(sys.stdout.fileno(), data)
                     if output_callback:
                         output_callback(data.decode(errors="replace"))
             except OSError:
@@ -151,6 +155,7 @@ class BaseCliRunner:
     env: dict[str, str] = field(default_factory=dict)
     exec_fn: ExecFn = subprocess.run
     use_pty: bool = False
+    forward_to_tty: bool = False
     output_callback: "Callable[[str], None] | None" = None
 
     def build_prompt(self, envelope: TaskEnvelope) -> str:
@@ -181,6 +186,7 @@ class BaseCliRunner:
                     timeout=self.timeout,
                     env=self.env or None,
                     output_callback=self.output_callback,
+                    forward_to_tty=self.forward_to_tty,
                 )
             else:
                 completed = self.exec_fn(

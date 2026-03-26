@@ -15,32 +15,71 @@ from devpipe.app import RunConfig, build_default_app
 from devpipe.roles.loader import load_roles
 from devpipe.runtime.state import STAGE_ORDER
 
-# Single combined regex strips all ESC sequences in one pass
-_ANSI_RE = re.compile(
-    r"\x1b\[[\x20-\x3f]*[\x40-\x7e]"           # CSI  (colors, cursor, modes…)
-    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"       # OSC
-    r"|\x1b[\x20-\x2f]*[\x30-\x7e]"             # other 2-char ESC sequences
-)
-# Residual coordinate fragments when ESC+[ arrived in the previous chunk, e.g. "32;16H"
-_COORD_RE = re.compile(r"\[?[\d;?=><!]+[A-Za-z@]")
-# Incomplete ESC at end of chunk (will be prepended to next chunk)
+# Partial ESC at end of chunk — carry to next chunk
 _PARTIAL_ESC = re.compile(r"\x1b(?:\[[\x20-\x3f]*)?$")
-
-
-def _clean(s: str) -> str:
-    s = _ANSI_RE.sub("", s)
-    # Remove residuals that look like terminal parameter sequences
-    # Only strip if they start right after a stripped spot or line boundary
-    s = re.sub(r"(?:^|(?<=\n))\s*[\d;?=><!]+[A-Za-z@]", "", s)
-    # Remove remaining control chars (keep \n and \t)
-    s = re.sub(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]", "", s)
-    return s.replace("\r", "")
-
-
+# Panel: blank + border + content + border = 4 lines; +1 blank after = 5
+_PANEL_LINES = 5
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-# Panel occupies: blank + top-border + content + bottom-border + blank = 5 lines
-# Spinner line = 1 line → reserve 6 lines, rest goes to output
-_PANEL_OVERHEAD = 6
+
+
+def _parse_chunk(text: str) -> tuple[list[str], str]:
+    """Parse a chunk of PTY output into finished lines and the current partial line.
+
+    Rules:
+    - \\r  resets the current line to empty (carriage-return overwrites)
+    - \\n  commits the current line and starts a new one
+    - ESC sequences ending in 'm' (SGR colors) are kept verbatim
+    - All other ESC/control sequences are discarded
+    Returns (finished_lines, current_partial).
+    """
+    lines: list[str] = []
+    cur = ""
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c == "\n":
+            lines.append(cur)
+            cur = ""
+            i += 1
+        elif c == "\r":
+            if i + 1 < len(text) and text[i + 1] == "\n":
+                lines.append(cur)  # \r\n = Windows newline — commit line
+                cur = ""
+                i += 2
+            else:
+                cur = ""   # bare \r = overwrite from column 0 — discard
+                i += 1
+        elif c == "\x1b":
+            j = i + 1
+            if j < len(text) and text[j] == "[":
+                # CSI sequence
+                j += 1
+                while j < len(text) and text[j] in "0123456789;:?>=<!":
+                    j += 1
+                if j < len(text):
+                    cmd = text[j]
+                    j += 1
+                    if cmd == "m":          # SGR — keep color/style
+                        cur += text[i:j]
+                    elif cmd in ("H", "f", "G", "A", "B", "C", "D", "E", "F", "J", "d"):
+                        cur = ""            # cursor movement → discard partial line
+                    # else: other sequences — discard
+            elif j < len(text) and text[j] == "]":
+                # OSC — skip until BEL or ESC
+                j += 1
+                while j < len(text) and text[j] not in ("\x07", "\x1b"):
+                    j += 1
+                if j < len(text):
+                    j += 1  # consume BEL or ESC
+            else:
+                j = min(j + 1, len(text))  # skip 2-char ESC
+            i = j
+        elif ord(c) < 0x20 or c == "\x7f":
+            i += 1  # discard other control chars
+        else:
+            cur += c
+            i += 1
+    return lines, cur
 
 
 class _RunProgress:
@@ -48,24 +87,26 @@ class _RunProgress:
         self.stages = stages
         self.current_stage = ""
         self._console = console
-        self._buf: list[str] = []
+        self._printed_stage: str | None = None
+        self._buf: list[str] = []   # colored lines, ready to display
+        self._carry = ""            # incomplete ESC from previous chunk
+        self._current_line = ""     # partial line (no \n yet)
         self._tick = 0
-        self._area_drawn = False  # whether the live area has been printed
-        self._drawn_n = 0         # number of output lines in the current area
-        self._esc_carry = ""     # incomplete ESC sequence from previous chunk
+        self._drawn_n = 0
+        self._area_drawn = False
 
-    @staticmethod
-    def _n() -> int:
-        return max(1, shutil.get_terminal_size().lines - _PANEL_OVERHEAD)
-
-    # ── public API ────────────────────────────────────────────────────────────
+    # ── stage header ─────────────────────────────────────────────────────────
 
     def set_stage(self, stage: str) -> None:
         self.current_stage = stage
+        if stage == self._printed_stage:
+            return
+        self._printed_stage = stage
         self._buf = []
+        self._carry = ""
+        self._current_line = ""
         self._tick = 0
         self._area_drawn = False
-        self._esc_carry = ""
 
         idx = self.stages.index(stage) if stage in self.stages else -1
         parts: list[str] = []
@@ -82,48 +123,49 @@ class _RunProgress:
             border_style="blue",
             title="[bold blue]devpipe[/bold blue]",
         ))
-        # flush Rich's buffer before raw writes
         self._console.file.flush()
         self._draw()
 
+    # ── output streaming ─────────────────────────────────────────────────────
+
     def on_output(self, text: str) -> None:
-        # Prepend any incomplete ESC sequence carried over from the previous chunk
-        text = self._esc_carry + text
-        # Save a trailing incomplete ESC sequence for the next chunk
+        text = self._carry + text
         m = _PARTIAL_ESC.search(text)
         if m:
-            self._esc_carry = m.group()
+            self._carry = m.group()
             text = text[: m.start()]
         else:
-            self._esc_carry = ""
+            self._carry = ""
 
-        for line in _clean(text).split("\n"):
-            line = line.strip()
-            if line:
-                self._buf.append(line)
+        finished, self._current_line = _parse_chunk(self._current_line + text)
+        self._buf.extend(line for line in finished if line.strip())
         self._tick += 1
         self._draw()
 
-    # ── internal ──────────────────────────────────────────────────────────────
+    # ── in-place window ───────────────────────────────────────────────────────
 
     def _draw(self) -> None:
-        n = self._n()
-        ts = shutil.get_terminal_size()
-        w = max(ts.columns - 6, 20)
+        n = max(1, shutil.get_terminal_size().lines - _PANEL_LINES - 1)
+        w = max(shutil.get_terminal_size().columns - 4, 20)
 
         if self._area_drawn:
-            # Move back to the spinner line of the current area
             sys.stdout.write(f"\x1b[{self._drawn_n + 1}A")
 
         spinner = _SPINNER[self._tick % len(_SPINNER)]
-        sys.stdout.write(f"\x1b[2K\r  {spinner}  {self.current_stage}\n")
+        sys.stdout.write(f"\x1b[2K\r  {spinner}  \x1b[2m{self.current_stage}\x1b[0m\n")
 
-        visible = ([""] * n + self._buf)[-n:]
+        display = self._buf + ([self._current_line] if self._current_line.strip() else [])
+        trimmed = display[-n:]  # last N lines (newest)
+        visible = trimmed + [""] * (n - len(trimmed))  # pad to N with blanks at end
         for line in visible:
-            if len(line) > w:
-                line = line[: w - 1] + "…"
-            sys.stdout.write(f"\x1b[2K\r  \x1b[2m{line}\x1b[0m\n")
+            # Truncate visible width (strip SGR for measuring, keep for display)
+            plain = re.sub(r"\x1b\[[0-9;]*m", "", line)
+            if len(plain) > w:
+                # Hard-truncate by visible chars — simple approximation
+                line = plain[: w - 1] + "…"
+            sys.stdout.write(f"\x1b[2K\r{line}\n")
 
+        sys.stdout.write("\x1b[0m")  # reset any unclosed color codes
         sys.stdout.flush()
         self._area_drawn = True
         self._drawn_n = n
@@ -193,10 +235,12 @@ def main(argv: list[str] | None = None) -> int:
         try:
             state = app.run(config, on_stage_start=progress.set_stage)
         except KeyboardInterrupt:
-            console.print("\n[dim]interrupted[/dim]")
+            sys.stdout.write("\x1b[?25h\n")
+            sys.stdout.flush()
+            console.print("[dim]interrupted[/dim]")
             return 130
         finally:
-            sys.stdout.write("\x1b[?25h")  # restore cursor
+            sys.stdout.write("\x1b[?25h")
             sys.stdout.flush()
 
         print(json.dumps({"run_id": state.run_id, "status": state.status, "current_stage": state.current_stage}))
