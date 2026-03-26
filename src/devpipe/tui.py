@@ -49,7 +49,7 @@ def _checkbox_with_apply(
             if name in current:
                 title = [("fg:black bg:cyan bold", f" {name} ")]
             else:
-                title = name
+                title = [("", f" {name} ")]
             items.append(questionary.Choice(title=title, value=name))
         items.append(Separator())
         items.append(questionary.Choice(title="Apply", value="__apply__"))
