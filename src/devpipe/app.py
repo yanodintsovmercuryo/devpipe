@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,7 +57,11 @@ class OrchestratorApp:
         self.engine = PipelineEngine(retry_policy=retry_policy)
         self.project_root = Path(project_root) if project_root is not None else None
 
-    def run(self, config: RunConfig) -> PipelineState:
+    def run(
+        self,
+        config: RunConfig,
+        on_stage_start: "Callable[[str], None] | None" = None,
+    ) -> PipelineState:
         from devpipe.history import save_run
         save_run(config)
 
@@ -121,6 +126,8 @@ class OrchestratorApp:
                 project_root=self.project_root,
                 tags=config.tags,
             )
+            if on_stage_start is not None:
+                on_stage_start(state.current_stage)
             try:
                 result = runner.run(envelope)
             except Exception as exc:
