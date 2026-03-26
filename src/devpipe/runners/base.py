@@ -207,6 +207,8 @@ class BaseCliRunner:
         try:
             structured_output = parser.parse(completed.stdout)
         except OutputParseError as exc:
+            with open("/tmp/devpipe_parse_error.txt", "w", errors="replace") as _f:
+                _f.write(f"role: {envelope.role}\nerror: {exc}\n\n--- stdout ---\n{completed.stdout}")
             raise InvalidRunnerOutputError(str(exc)) from exc
 
         return TaskResult(

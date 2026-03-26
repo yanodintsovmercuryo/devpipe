@@ -25,6 +25,8 @@ class OutputParser:
     _ANSI_RE = re.compile(r"\x1b(?:\[[0-9;:?>=<!]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|.)")
 
     def _extract_json(self, transcript: str) -> dict[str, object]:
+        with open("/tmp/devpipe_transcript.txt", "w", errors="replace") as _f:
+            _f.write(transcript)
         clean = self._ANSI_RE.sub("", transcript)
 
         # 1. Fenced ```json block

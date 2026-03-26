@@ -452,7 +452,8 @@ def run_tui(base_dir: Path) -> RunConfig | None:
 
         elif choice == "Set runner":
             _input_header()
-            val = questionary.select("Runner:", choices=["codex", "claude", "mock"], default=cfg["runner"], style=_STYLE, qmark="", instruction=" ").ask()
+            runner_choices = ["codex", "claude"]
+            val = questionary.select("Runner:", choices=runner_choices, default=cfg["runner"] if cfg["runner"] in runner_choices else runner_choices[0], style=_STYLE, qmark="", instruction=" ").ask()
             if val is not None:
                 cfg["runner"] = val
 
@@ -557,16 +558,25 @@ def run_tui(base_dir: Path) -> RunConfig | None:
                 continue
             picked = _history_menu(history, console)
             if picked:
+                _valid_runners = {"codex", "claude"}
+                _valid_roles = set(STAGE_ORDER)
                 cfg["task"] = picked.get("task") or ""
                 cfg["task_id"] = picked.get("task_id") or ""
-                cfg["runner"] = picked.get("runner") or "codex"
+                picked_runner = picked.get("runner") or ""
+                if picked_runner in _valid_runners:
+                    cfg["runner"] = picked_runner
                 cfg["target_branch"] = picked.get("target_branch") or ""
                 cfg["namespace"] = picked.get("namespace") or ""
                 cfg["service"] = picked.get("service") or ""
-                cfg["tags"] = picked.get("tags") or []
+                picked_tags = [t for t in (picked.get("tags") or []) if t in available_tag_names]
+                cfg["tags"] = picked_tags
                 cfg["extra_params"] = dict(picked.get("extra_params") or {})
-                cfg["first_role"] = picked.get("first_role") or ""
-                cfg["last_role"] = picked.get("last_role") or ""
+                picked_first = picked.get("first_role") or ""
+                if picked_first in _valid_roles or not picked_first:
+                    cfg["first_role"] = picked_first
+                picked_last = picked.get("last_role") or ""
+                if picked_last in _valid_roles or not picked_last:
+                    cfg["last_role"] = picked_last
                 tag_params_meta = _load_tag_params()
                 menu_cursor = "Run"
 
