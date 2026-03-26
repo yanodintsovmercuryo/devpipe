@@ -25,10 +25,9 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 ## Запуск
 
 ```bash
-devpipe
+devpipe          # интерактивное TUI — основной режим
+devpipe run ...  # без TUI, все параметры флагами — для скриптов и CI
 ```
-
-Открывает интерактивное меню. Единственный обязательный параметр — **task**.
 
 ---
 
@@ -213,7 +212,9 @@ available:
 
 ---
 
-## CLI (без TUI)
+## devpipe run (без TUI)
+
+Для скриптов и CI — все параметры передаются флагами напрямую:
 
 ```bash
 devpipe run \

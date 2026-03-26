@@ -40,8 +40,6 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser = subparsers.add_parser("inspect", help="Inspect available roles")
     inspect_parser.add_argument("--roles-dir", required=True)
 
-    subparsers.add_parser("tui", help="Interactive TUI (default when no subcommand given)")
-
     return parser
 
 
@@ -49,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command in (None, "tui"):
+    if args.command is None:
         from devpipe.tui import run_tui
         base_dir = Path(args.roles_dir).resolve().parents[0] if getattr(args, "roles_dir", None) else Path(__file__).resolve().parents[2]
         config = run_tui(base_dir)
