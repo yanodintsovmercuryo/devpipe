@@ -23,10 +23,10 @@ class RunConfig:
     task: str
     runner: str
     target_branch: str | None = None
-    dataset: str | None = None
     namespace: str | None = None
     service: str | None = None
     tags: list[str] | None = None
+    extra_params: dict[str, str] | None = None
     first_role: str | None = None
     last_role: str | None = None
 
@@ -85,9 +85,9 @@ class OrchestratorApp:
         state.release_context.update(
             {
                 "target_branch": config.target_branch,
-                "dataset": config.dataset,
                 "namespace": namespace,
                 "service": config.service,
+                **(config.extra_params or {}),
             }
         )
 

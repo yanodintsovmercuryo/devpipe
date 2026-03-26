@@ -29,7 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--roles-dir", default=None)
     run_parser.add_argument("--runs-dir", default=None)
     run_parser.add_argument("--target-branch")
-    run_parser.add_argument("--dataset")
+    run_parser.add_argument("--param", dest="params", action="append", metavar="KEY=VALUE",
+                            help="Extra tag param, e.g. --param dataset=s4-3ds")
     run_parser.add_argument("--namespace")
     run_parser.add_argument("--service", default="acquiring")
     run_parser.add_argument("--tag", dest="tags", action=CommaSeparatedTags, default=[])
@@ -69,16 +70,22 @@ def main(argv: list[str] | None = None) -> int:
     app = build_default_app(base_dir)
     if args.runs_dir:
         app.runs_dir = Path(args.runs_dir)
+    extra_params = {}
+    for p in args.params or []:
+        if "=" in p:
+            k, v = p.split("=", 1)
+            extra_params[k.strip()] = v.strip()
+
     state = app.run(
         RunConfig(
             task_id=args.task_id,
             task=args.task,
             runner=args.runner,
             target_branch=args.target_branch,
-            dataset=args.dataset,
             namespace=args.namespace,
             service=args.service,
             tags=args.tags,
+            extra_params=extra_params or None,
             first_role=args.first_role,
             last_role=args.last_role,
         )

@@ -10,6 +10,7 @@ import yaml
 class ProjectConfig:
     defaults: dict = field(default_factory=dict)
     available: dict = field(default_factory=dict)
+    tag_params: dict = field(default_factory=dict)  # {tag_name: {defaults: {}, available: {}}}
 
     def default(self, key: str, fallback=None):
         return self.defaults.get(key, fallback)
@@ -26,4 +27,5 @@ def load_project_config(cwd: Path | None = None) -> ProjectConfig:
     return ProjectConfig(
         defaults=data.get("defaults", {}),
         available=data.get("available", {}),
+        tag_params=data.get("tag_params", {}),
     )
