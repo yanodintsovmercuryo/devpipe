@@ -1,5 +1,7 @@
 name: qa_local
 runner: codex
+model: middle
+effort: middle
 allowed_inputs:
   - task
   - tests

@@ -145,6 +145,17 @@ class _RunProgress:
         self._stage_started_at = time.monotonic()
         self._draw()
 
+    def set_stage_profile(self, stage: str, model_name: str, effort: str) -> None:
+        self.model_name = model_name
+        self.effort = effort
+        self.set_stage(stage)
+
+    def set_stage_runtime(self, stage: str, runner_name: str, model_name: str, effort: str) -> None:
+        self.runner_name = runner_name
+        self.model_name = model_name
+        self.effort = effort
+        self.set_stage(stage)
+
     # ── output streaming ─────────────────────────────────────────────────────
 
     def on_output(self, text: str) -> None:
@@ -424,7 +435,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Run full pipeline")
     run_parser.add_argument("--task-id", default=None)
     run_parser.add_argument("--task", required=True)
-    run_parser.add_argument("--runner", required=True, choices=["codex", "claude"])
+    run_parser.add_argument("--runner", required=True, choices=["codex", "claude", "auto"])
     run_parser.add_argument("--roles-dir", default=None)
     run_parser.add_argument("--runs-dir", default=None)
     run_parser.add_argument("--target-branch")
@@ -488,21 +499,22 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write("\x1b[?1000h\x1b[?1006h")  # enable mouse reporting (SGR mode)
         sys.stdout.flush()
 
-        runner = app.runners[config.runner]
+        ui_runner = app.runners["codex"] if config.runner == "auto" else app.runners[config.runner]
         progress = _RunProgress(
             active_stages,
             console,
             runner_name=config.runner,
-            model_name=getattr(runner, "model_name", None),
-            effort=getattr(runner, "effort", None),
+            model_name=getattr(ui_runner, "model_name", None),
+            effort=getattr(ui_runner, "effort", None),
         )
-        runner.output_callback = progress.on_output    # type: ignore[union-attr]
-        runner.stdin_callback = progress.on_stdin      # type: ignore[union-attr]
+        for runner in app.runners.values():
+            runner.output_callback = progress.on_output    # type: ignore[union-attr]
+            runner.stdin_callback = progress.on_stdin      # type: ignore[union-attr]
 
         try:
             state = app.run(
                 config,
-                on_stage_start=progress.set_stage,
+                on_stage_start=progress.set_stage_runtime,
                 on_stage_complete=progress.show_stage_result,
             )
         except KeyboardInterrupt:

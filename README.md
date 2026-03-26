@@ -235,7 +235,7 @@ devpipe run \
 | `--runner` | `codex` или `claude` |
 | `--target-branch` | Стенд / ветка деплоя |
 | `--service` | Имя сервиса |
-| `--namespace` | Kubernetes namespace (иначе из `config/namespace-map.yaml`) |
+| `--namespace` | Kubernetes namespace for the `release` stage |
 | `--tag` | Теги через запятую |
 | `--param` | Параметр тега: `key=value`, можно несколько |
 | `--first-role` | С какой роли начать |
@@ -257,8 +257,7 @@ devpipe/
 │       ├── developer/rules.md
 │       └── test_developer/rules.md
 ├── config/
-│   ├── runners.yaml        # настройки runners (команда, timeout)
-│   └── namespace-map.yaml  # service+branch → kubernetes namespace
+│   └── runners.yaml        # настройки runners: команда, timeout, model/effort mapping
 └── src/devpipe/
     ├── cli.py
     ├── tui.py              # интерактивное меню

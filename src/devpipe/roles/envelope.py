@@ -14,6 +14,8 @@ class TaskEnvelope:
     role: str
     goal: str
     instructions: str
+    model_name: str
+    effort: str
     context: dict[str, object]
     artifacts: dict[str, object]
     constraints: list[str]
@@ -48,6 +50,9 @@ def compose_role_instructions(
 
     root = Path(project_root)
     sections: list[str] = []
+    project_rules = _read(root / ".devpipe" / f"{role_name.upper()}_RULES.md")
+    if project_rules:
+        sections.append(f"## Project-Specific Rules\n\n{project_rules}")
 
     for tag in tags or []:
         # Custom tag rules: .devpipe/tags/<tag>/<role>/rules.md
@@ -69,6 +74,8 @@ def compose_role_instructions(
 def build_envelope(
     role: RoleDefinition,
     state: PipelineState,
+    model_name: str,
+    effort: str,
     extra_context: dict[str, object] | None = None,
     project_root: str | Path | None = None,
     tags: list[str] | None = None,
@@ -88,6 +95,8 @@ def build_envelope(
         role=role.name,
         goal=f"Execute stage {role.name} for task {state.task_id}",
         instructions=compose_role_instructions(role.prompt, role.name, project_root=project_root, tags=tags),
+        model_name=model_name,
+        effort=effort,
         context=context,
         artifacts=state.artifacts,
         constraints=["Return machine-readable JSON matching output_schema."],

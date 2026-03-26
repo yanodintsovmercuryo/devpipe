@@ -1,5 +1,7 @@
 name: release
 runner: codex
+model: low
+effort: low
 allowed_inputs:
   - qa_report
   - namespace

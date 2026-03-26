@@ -184,6 +184,8 @@ class BaseCliRunner:
         return (
             f"Role: {envelope.role}\n"
             f"Goal: {envelope.goal}\n"
+            f"Model: {envelope.model_name}\n"
+            f"Effort: {envelope.effort}\n"
             f"Instructions:\n{envelope.instructions}\n\n"
             f"Context: {envelope.context}\n"
             f"Constraints: {envelope.constraints}\n"

@@ -1,5 +1,7 @@
 name: developer
 runner: codex
+model: high
+effort: middle
 allowed_inputs:
   - task
   - architecture_plan

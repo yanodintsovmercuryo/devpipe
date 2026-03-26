@@ -24,6 +24,8 @@ def test_claude_runner_uses_command_template() -> None:
             role="qa_local",
             goal="Validate implementation",
             instructions="Return JSON",
+            model_name="sonnet",
+            effort="medium",
             context={},
             artifacts={},
             constraints=[],
@@ -31,5 +33,5 @@ def test_claude_runner_uses_command_template() -> None:
         )
     )
 
-    assert calls[0][:2] == ["claude", "--print"]
+    assert calls[0][:6] == ["claude", "--print", "--model", "sonnet", "--effort", "medium"]
     assert result.summary == "ready"

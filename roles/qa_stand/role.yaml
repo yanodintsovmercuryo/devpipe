@@ -1,5 +1,7 @@
 name: qa_stand
 runner: codex
+model: middle
+effort: middle
 allowed_inputs:
   - release_metadata
   - shared_context

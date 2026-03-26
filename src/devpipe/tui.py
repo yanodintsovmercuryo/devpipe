@@ -412,10 +412,10 @@ def run_tui(base_dir: Path) -> RunConfig | None:
         choices: list = [
             _c("Set task",          "What needs to be done — the main prompt for the AI agent"),
             _c("Set task ID",       "Jira ticket ID (e.g. MRC-123); leave empty to skip Jira context"),
-            _c("Set runner",        "AI runner: codex (OpenAI Codex CLI) or claude (Claude Code)"),
+            _c("Set runner",        "AI runner: codex, claude, or auto (take runner from each role)"),
             _c("Set target branch", "Deploy stand branch; if empty — pipeline stops at qa_local"),
-            _c("Set service",       "Service name used for namespace lookup and release context"),
-            _c("Set namespace",     "Kubernetes namespace override; auto-resolved from service+branch if empty"),
+            _c("Set service",       "Service name passed only to the release stage"),
+            _c("Set namespace",     "Kubernetes namespace passed explicitly to the release stage"),
         ]
         if available_tag_names:
             choices.append(_c("Set tags", "Active tag set — each tag injects rules and params into the pipeline"))
@@ -452,7 +452,7 @@ def run_tui(base_dir: Path) -> RunConfig | None:
 
         elif choice == "Set runner":
             _input_header()
-            runner_choices = ["codex", "claude"]
+            runner_choices = ["codex", "claude", "auto"]
             val = questionary.select("Runner:", choices=runner_choices, default=cfg["runner"] if cfg["runner"] in runner_choices else runner_choices[0], style=_STYLE, qmark="", instruction=" ").ask()
             if val is not None:
                 cfg["runner"] = val
@@ -477,7 +477,7 @@ def run_tui(base_dir: Path) -> RunConfig | None:
         elif choice == "Set namespace":
             _input_header()
             val = _select_or_text(
-                "Namespace (empty for auto):",
+                "Namespace:",
                 project_cfg.available_list("namespace"),
                 cfg["namespace"],
                 _STYLE,
@@ -558,7 +558,7 @@ def run_tui(base_dir: Path) -> RunConfig | None:
                 continue
             picked = _history_menu(history, console)
             if picked:
-                _valid_runners = {"codex", "claude"}
+                _valid_runners = {"codex", "claude", "auto"}
                 _valid_roles = set(STAGE_ORDER)
                 cfg["task"] = picked.get("task") or ""
                 cfg["task_id"] = picked.get("task_id") or ""

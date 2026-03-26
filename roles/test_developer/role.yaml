@@ -1,5 +1,7 @@
 name: test_developer
 runner: codex
+model: middle
+effort: high
 allowed_inputs:
   - task
   - code_changes

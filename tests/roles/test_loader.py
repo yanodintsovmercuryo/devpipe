@@ -11,7 +11,7 @@ def test_loader_reads_role_directories(tmp_path: Path) -> None:
     role_dir = tmp_path / "architect"
     role_dir.mkdir(parents=True)
     (role_dir / "role.yaml").write_text(
-        "name: architect\nrunner: codex\nproduces:\n  - plan\nretry_limit: 2\n",
+        "name: architect\nrunner: claude\nmodel: high\neffort: middle\nproduces:\n  - plan\nretry_limit: 2\n",
         encoding="utf-8",
     )
     (role_dir / "prompt.md").write_text("You are architect", encoding="utf-8")
@@ -24,6 +24,9 @@ def test_loader_reads_role_directories(tmp_path: Path) -> None:
 
     assert list(roles) == ["architect"]
     assert roles["architect"].retry_limit == 2
+    assert roles["architect"].runner == "claude"
+    assert roles["architect"].model == "high"
+    assert roles["architect"].effort == "middle"
     assert roles["architect"].prompt.startswith("You are architect")
 
 
@@ -31,7 +34,7 @@ def test_envelope_appends_project_specific_role_rules(tmp_path: Path) -> None:
     role_dir = tmp_path / "architect"
     role_dir.mkdir(parents=True)
     (role_dir / "role.yaml").write_text(
-        "name: architect\nrunner: codex\nproduces:\n  - plan\nretry_limit: 2\n",
+        "name: architect\nrunner: codex\nmodel: high\neffort: middle\nproduces:\n  - plan\nretry_limit: 2\n",
         encoding="utf-8",
     )
     (role_dir / "prompt.md").write_text("Base architect prompt", encoding="utf-8")
@@ -46,7 +49,7 @@ def test_envelope_appends_project_specific_role_rules(tmp_path: Path) -> None:
     role = load_roles(tmp_path)["architect"]
     state = PipelineState.create(task_id="MRC-7", task_text="Plan work", selected_runner="codex")
 
-    envelope = build_envelope(role, state, project_root=tmp_path)
+    envelope = build_envelope(role, state, model_name="gpt-5.4", effort="medium", project_root=tmp_path)
 
     assert "Base architect prompt" in envelope.instructions
     assert "Project-Specific Rules" in envelope.instructions
@@ -57,7 +60,7 @@ def test_envelope_appends_tagged_role_rules_after_project_rules(tmp_path: Path) 
     role_dir = tmp_path / "developer"
     role_dir.mkdir(parents=True)
     (role_dir / "role.yaml").write_text(
-        "name: developer\nrunner: codex\nproduces:\n  - code\nretry_limit: 2\n",
+        "name: developer\nrunner: codex\nmodel: middle\neffort: high\nproduces:\n  - code\nretry_limit: 2\n",
         encoding="utf-8",
     )
     (role_dir / "prompt.md").write_text("Base developer prompt", encoding="utf-8")
@@ -71,10 +74,10 @@ def test_envelope_appends_tagged_role_rules_after_project_rules(tmp_path: Path) 
     role = load_roles(tmp_path)["developer"]
     state = PipelineState.create(task_id="MRC-8", task_text="Implement work", selected_runner="codex")
 
-    envelope = build_envelope(role, state, project_root=tmp_path, tags=["go"])
+    envelope = build_envelope(role, state, model_name="gpt-5.4", effort="high", project_root=tmp_path, tags=["go"])
 
     assert "Base developer prompt" in envelope.instructions
     assert "Repository-specific rules." in envelope.instructions
-    assert "## Tagged Rules: go" in envelope.instructions
+    assert "## Tag Rules: go" in envelope.instructions
     assert "Keep dependency interfaces in `external.go`" in envelope.instructions
-    assert envelope.instructions.index("Repository-specific rules.") < envelope.instructions.index("## Tagged Rules: go")
+    assert envelope.instructions.index("Repository-specific rules.") < envelope.instructions.index("## Tag Rules: go")

@@ -2,7 +2,24 @@ runners:
   codex:
     command: ["codex"]
     timeout: 300
+    model:
+      low: gpt-5.4-mini
+      middle: gpt-5.3-codex
+      high: gpt-5.4
+    effort:
+      low: low
+      middle: medium
+      high: hight
+      extra: extra-hight
   claude:
     command: ["claude"]
     timeout: 300
-
+    model:
+      low: Haiku 4.5
+      middle: Sonnet 4.6
+      high: Opus 4.6
+    effort:
+      low: low
+      middle: medium
+      high: hight
+      extra: hight

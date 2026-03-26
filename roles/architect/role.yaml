@@ -1,5 +1,7 @@
 name: architect
 runner: codex
+model: medium
+effort: medium
 allowed_inputs:
   - task
   - jira

@@ -4,7 +4,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from devpipe.integrations.namespace_map import NamespaceMap
 from devpipe.roles.envelope import build_envelope
 from devpipe.roles.loader import RoleDefinition, load_roles
 from devpipe.runtime.engine import PipelineEngine
@@ -13,6 +12,12 @@ from devpipe.runtime.retry import RetryPolicy
 from devpipe.runtime.state import STAGE_ORDER, PipelineState
 from devpipe.runners.claude import ClaudeRunner
 from devpipe.runners.codex import CodexRunner
+from devpipe.runners.profile_map import (
+    RunnerProfiles,
+    load_runner_profiles,
+    resolve_effort,
+    resolve_model,
+)
 from devpipe.storage.artifact_store import ArtifactStore
 from devpipe.storage.config_store import ConfigStore
 from devpipe.storage.run_logger import RunLogger
@@ -38,29 +43,29 @@ class OrchestratorApp:
         roles: dict[str, RoleDefinition],
         runners: dict[str, object],
         runs_dir: str | Path,
-        namespace_map: NamespaceMap | None,
         jira_adapter=None,
         git_adapter=None,
         github_adapter=None,
         kubernetes_adapter=None,
         retry_policy: RetryPolicy | None = None,
         project_root: str | Path | None = None,
+        runner_profiles: RunnerProfiles | None = None,
     ) -> None:
         self.roles = roles
         self.runners = runners
         self.runs_dir = Path(runs_dir)
-        self.namespace_map = namespace_map
         self.jira_adapter = jira_adapter
         self.git_adapter = git_adapter
         self.github_adapter = github_adapter
         self.kubernetes_adapter = kubernetes_adapter
         self.engine = PipelineEngine(retry_policy=retry_policy)
         self.project_root = Path(project_root) if project_root is not None else None
+        self.runner_profiles = runner_profiles or {}
 
     def run(
         self,
         config: RunConfig,
-        on_stage_start: "Callable[[str], None] | None" = None,
+        on_stage_start: "Callable[[str, str, str, str], None] | None" = None,
         on_stage_complete: "Callable[[str, dict], None] | None" = None,
     ) -> PipelineState:
         from devpipe.history import save_run
@@ -76,29 +81,9 @@ class OrchestratorApp:
         if STAGE_ORDER.index(first_role) > STAGE_ORDER.index(last_role):
             raise ValueError(f"first_role '{first_role}' must come before last_role '{last_role}'")
 
-        effective_stages = STAGE_ORDER[STAGE_ORDER.index(first_role):STAGE_ORDER.index(last_role) + 1]
-        needs_namespace = any(s in effective_stages for s in ("release", "qa_stand"))
-
-        if needs_namespace:
-            if config.namespace:
-                namespace = config.namespace
-            elif self.namespace_map and config.service and config.target_branch:
-                namespace = self.namespace_map.resolve(service=config.service, target_branch=config.target_branch)
-            else:
-                raise ValueError("Namespace must be provided explicitly or via namespace mapping")
-        else:
-            namespace = config.namespace
-
         task_id = config.task_id or "no-id"
         state = PipelineState.create(task_id=task_id, task_text=config.task, selected_runner=config.runner)
-        state.release_context.update(
-            {
-                "target_branch": config.target_branch,
-                "namespace": namespace,
-                "service": config.service,
-                **(config.extra_params or {}),
-            }
-        )
+        state.release_context.update({**(config.extra_params or {})})
 
         if self.jira_adapter is not None and config.task_id:
             state.shared_context["jira"] = self.jira_adapter.fetch_issue(config.task_id)
@@ -113,22 +98,41 @@ class OrchestratorApp:
 
         while state.status not in {"completed", "failed"}:
             role = self.roles[state.current_stage]
-            runner = self.runners[config.runner]
-            if state.current_stage == "release" and self.git_adapter is not None:
-                state.shared_context["branch"] = getattr(self.git_adapter, "current_branch", lambda: None)()
-            if state.current_stage == "qa_stand" and self.kubernetes_adapter is not None:
-                pods = self.kubernetes_adapter.wait_until_ready(namespace=namespace, service=config.service or "service")
-                state.release_context["pods"] = pods
+            actual_runner_name = role.runner if config.runner == "auto" else config.runner
+            runner = self.runners[actual_runner_name]
+            state.selected_runner = actual_runner_name
+            resolved_model = resolve_model(self.runner_profiles, actual_runner_name, role.model)
+            resolved_effort = resolve_effort(self.runner_profiles, actual_runner_name, role.effort)
+            runner.model_name = resolved_model
+            runner.effort = resolved_effort
+            stage_context: dict[str, object] = {"config": config.__dict__}
+            if state.current_stage == "release":
+                if not config.target_branch:
+                    raise ValueError("target_branch must be provided for release stage")
+                if not config.namespace:
+                    raise ValueError("namespace must be provided for release stage")
+                if not config.service:
+                    raise ValueError("service must be provided for release stage")
+                current_branch = getattr(self.git_adapter, "current_branch", lambda: None)() if self.git_adapter is not None else None
+                stage_context["release_inputs"] = {
+                    "branch": current_branch,
+                    "target_branch": config.target_branch,
+                    "namespace": config.namespace,
+                    "service": config.service,
+                    **(config.extra_params or {}),
+                }
 
             envelope = build_envelope(
                 role,
                 state,
-                extra_context={"config": config.__dict__},
+                model_name=resolved_model,
+                effort=resolved_effort,
+                extra_context=stage_context,
                 project_root=self.project_root,
                 tags=config.tags,
             )
             if on_stage_start is not None:
-                on_stage_start(state.current_stage)
+                on_stage_start(state.current_stage, actual_runner_name, resolved_model, resolved_effort)
             try:
                 result = runner.run(envelope)
             except Exception as exc:
@@ -171,7 +175,9 @@ class OrchestratorApp:
 def build_default_app(base_dir: str | Path) -> OrchestratorApp:
     base = Path(base_dir)
     config_store = ConfigStore(base / "config" / "runners.yaml")
-    runner_config = config_store.load().get("runners", {})
+    raw_config = config_store.load()
+    runner_config = raw_config.get("runners", {})
+    runner_profiles = load_runner_profiles(raw_config)
     roles = load_roles(base / "roles")
 
     codex_config = runner_config.get("codex", {})
@@ -180,23 +186,17 @@ def build_default_app(base_dir: str | Path) -> OrchestratorApp:
         "codex": CodexRunner(
             command=codex_config.get("command", ["codex"]),
             timeout=int(codex_config.get("timeout", 300)),
-            model_name=codex_config.get("model"),
-            effort=codex_config.get("effort"),
         ),
         "claude": ClaudeRunner(
             command=claude_config.get("command", ["claude"]),
             timeout=int(claude_config.get("timeout", 300)),
-            model_name=claude_config.get("model"),
-            effort=claude_config.get("effort"),
         ),
     }
 
-    namespace_map_path = base / "config" / "namespace-map.yaml"
-    namespace_map = NamespaceMap(namespace_map_path) if namespace_map_path.exists() else None
     return OrchestratorApp(
         roles=roles,
         runners=runners,
         runs_dir=base / "runs",
-        namespace_map=namespace_map,
         project_root=Path.cwd(),
+        runner_profiles=runner_profiles,
     )

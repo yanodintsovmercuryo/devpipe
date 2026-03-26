@@ -225,6 +225,8 @@ class CodexRunner(BaseCliRunner):
         command = self.command + [
             "exec",
             "--dangerously-bypass-approvals-and-sandbox",
+            "-m", envelope.model_name,
+            "-c", f'model_reasoning_effort="{envelope.effort}"',
             "--output-last-message", self._output_file,
             "--output-schema", schema_file,
             "--json",
