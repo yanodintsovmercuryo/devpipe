@@ -280,12 +280,26 @@ def run_tui(base_dir: Path) -> RunConfig | None:
     def _init_tag_param_defaults(tag_params_meta: list) -> None:
         for _tag_name, param, _available, default in tag_params_meta:
             if param.key not in cfg["extra_params"]:
-                cfg["extra_params"][param.key] = [] if param.multi else default
+                project_default = project_cfg.defaults.get(param.key)
+                if project_default is not None:
+                    cfg["extra_params"][param.key] = project_default
+                else:
+                    cfg["extra_params"][param.key] = [] if param.multi else default
 
     def _input_header() -> None:
         console.clear()
         _render_summary(cfg, tag_params_meta, console)
         print()
+
+    # Pre-populate extra_params from project_cfg.defaults (all tag params, no role filter)
+    _STANDARD_KEYS = {"task", "task_id", "runner", "target_branch", "service", "namespace", "tags", "first_role", "last_role"}
+    for key, val in project_cfg.defaults.items():
+        if key not in _STANDARD_KEYS:
+            if isinstance(val, list):
+                val = [str(v) for v in val]
+            elif val is not None:
+                val = str(val)
+            cfg["extra_params"].setdefault(key, val)
 
     # Init defaults from already-selected tags
     tag_params_meta = _load_tag_params()
