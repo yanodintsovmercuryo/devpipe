@@ -1,216 +1,204 @@
 # devpipe
 
-devpipe — оркестратор AI-агентов для автоматизации цикла разработки. Последовательно запускает шесть ролей, каждую из которых выполняет Codex или Claude по заранее заданному промпту.
+AI-агент оркестратор для автоматизации цикла разработки. Запускает шесть ролей последовательно, каждую выполняет Codex или Claude по заданным промптам и правилам.
 
 ```
 architect → developer → test_developer → qa_local → release → qa_stand
 ```
 
-## Что делает каждая роль
+---
 
-| Роль | Задача |
-|------|--------|
-| `architect` | Анализирует задачу, составляет план реализации |
-| `developer` | Реализует код по плану архитектора |
-| `test_developer` | Пишет тесты для изменений |
-| `qa_local` | Проверяет корректность локально |
-| `release` | Готовит и выполняет деплой |
-| `qa_stand` | Проверяет задеплоенные изменения на стенде |
-
-## Быстрый старт
-
-### Требования
-
-- Python 3.9+
-- [Codex CLI](https://github.com/openai/codex) и/или [Claude CLI](https://claude.ai/code)
-- [mise](https://mise.jdx.dev/) (опционально)
-
-### Установка
+## Установка
 
 ```bash
-# С mise
-mise install
-mise run install
-
-# Без mise
-python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
+mise install        # устанавливает python 3.13
+mise run install    # создаёт .venv и устанавливает зависимости
 ```
 
-### Запуск
+Без mise:
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+```
+
+---
+
+## Запуск
 
 ```bash
-# Интерактивный TUI (рекомендуется)
 devpipe
-
-# Напрямую через CLI
-devpipe run --task "Добавить новый метод оплаты" --runner codex
 ```
 
-## Интерактивный TUI
+Открывает интерактивное меню. Единственный обязательный параметр — **task**.
 
-`devpipe` без аргументов открывает меню конфигурации:
+---
+
+## Интерактивное меню
 
 ```
-┌─ devpipe ───────────────────────────────────────┐
-│  task          (empty)  ← required              │
-│  task-id       MRC-123                          │
-│  runner        codex                            │
-│  target-branch none → last role: qa_local       │
-│  service       acquiring                        │
-│  namespace     auto                             │
-│  tags          go, exchange_buy                 │
-│    dataset     s4-3ds          [exchange_buy]   │
-│  roles         architect → qa_local             │
-└─────────────────────────────────────────────────┘
-
-> Set task
-  Set task ID
-  Set runner
-  Set target branch
-  ...
-  ▶  Run
+┌─ devpipe ─────────────────────────────────────┐
+│  task          ← required                     │
+│  task-id       MRC-123        (из ветки git)  │
+│  runner        codex                          │
+│  target-branch u1                             │
+│  service       acquiring                      │
+│  namespace     auto                           │
+│  tags          acquiring-service, go          │
+│    dataset     s4-3ds                         │
+│  roles         architect → qa_stand           │
+└───────────────────────────────────────────────┘
 ```
 
-- `task-id` предзаполняется из текущей ветки git (`MRC-123-feature` → `MRC-123`)
-- `target-branch` пустой → последняя роль автоматически `qa_local`; заполнен → `qa_stand`
-- Теги с параметрами добавляют свои пункты в меню (например `Set dataset  [exchange_buy]`)
-- Выбор `first role` / `last role` ограничен — невалидный диапазон выбрать нельзя
-- `▶  Run` появляется только когда `task` заполнен
+- **task-id** — подставляется автоматически из ветки (`MRC-123-my-feature` → `MRC-123`). Если указан — загружается контекст из Jira. Можно очистить чтобы пропустить Jira.
+- **target-branch** — стенд для деплоя. Если не указан — пайплайн останавливается на `qa_local`.
+- **tags** — список с множественным выбором. Параметры активных тегов появляются отдельными пунктами меню.
+- **first role / last role** — диапазон ограничен, невалидный выбрать нельзя.
+- **▶ Run** — появляется только когда `task` заполнен.
 
-## CLI (скриптовый режим)
-
-```bash
-devpipe run \
-  --task "Добавить новый метод оплаты" \
-  --runner codex \
-  --target-branch u1 \
-  --service acquiring \
-  --namespace acquiring-u1 \
-  --tag go,exchange_buy \
-  --param dataset=s4-3ds
-```
-
-### Все флаги
-
-| Флаг | Обязательный | Описание |
-|------|:---:|---------|
-| `--task` | да | Текст задачи |
-| `--runner` | да | `codex` или `claude` |
-| `--task-id` | нет | ID задачи в Jira; если указан — загружается контекст |
-| `--target-branch` | нет | Целевая ветка / стенд для деплоя |
-| `--service` | нет | Имя сервиса (default: `acquiring`) |
-| `--namespace` | нет | Kubernetes namespace (иначе из `namespace-map.yaml`) |
-| `--tag` | нет | Теги через запятую (например `go,exchange_buy`) |
-| `--param` | нет | Параметр тега в формате `key=value`, можно несколько |
-| `--first-role` | нет | С какой роли начать |
-| `--last-role` | нет | На какой роли остановиться |
+---
 
 ## Частичный запуск
 
+Например, только разработка без деплоя:
+
+```
+Set last role → developer
+```
+
+Или через CLI:
 ```bash
-# Только архитектура и разработка (namespace не нужен)
 devpipe run --task "..." --runner codex --last-role developer
-
-# Только тесты
-devpipe run --task "..." --runner codex \
-  --first-role test_developer --last-role test_developer
 ```
 
-`target-branch` пустой → `last-role` по умолчанию `qa_local`. Namespace нужен только если в диапазоне есть `release` или `qa_stand`.
+---
 
-## Теги
+## Настройка проекта (.devpipe/)
 
-Тег делает две вещи:
+Создай `.devpipe/` в корне **рабочего репозитория** (не в devpipe). Именно оттуда devpipe читает конфигурацию при запуске.
 
-1. **Добавляет правила к промптам ролей** — файлы вида `DEVELOPER_RULES.md`, `QA_STAND_RULES.md` и т.д. в директории тега автоматически дописываются к промпту соответствующей роли когда тег активен.
+### config.yaml
 
-2. **Объявляет входные параметры** — в `tag.yaml` тег описывает какие значения ему нужны (например `dataset`). Эти значения появляются в TUI как отдельные пункты меню, а при запуске попадают в `release_context` — и AI видит их в своём промпте.
-
-### Как это работает на примере `exchange_buy`
-
-Тег объявляет параметр `dataset` в `tag.yaml`. При запуске значение `s4-3ds` попадает в контекст роли `qa_stand`:
-
-```
-Context: {
-  ...
-  "release_context": {
-    "target_branch": "u1",
-    "dataset": "s4-3ds",
-    ...
-  }
-}
-```
-
-В `QA_STAND_RULES.md` написано что с этим делать:
-
-```markdown
-Run the `/pw-exchange-buy` skill:
-
-    /pw-exchange-buy \
-      --stand {release_context.target_branch} \
-      --dataset {release_context.dataset}
-```
-
-AI читает правила, берёт значения из контекста и выполняет сценарий.
-
-### Встроенные теги
-
-| Тег | Правила для ролей | Параметры |
-|-----|-------------------|-----------|
-| `go` | `DEVELOPER_RULES.md`, `TEST_DEVELOPER_RULES.md` | — |
-| `exchange_buy` | `QA_STAND_RULES.md` | `dataset` |
-
-### Структура тега
-
-```
-tags/
-  my_tag/
-    tag.yaml                # описание тега (опционально)
-    QA_STAND_RULES.md       # правила для qa_stand (опционально)
-    QA_STAND_PARAMS.yaml    # параметры для qa_stand (опционально)
-    DEVELOPER_RULES.md      # правила для developer (опционально)
-    DEVELOPER_PARAMS.yaml   # параметры для developer (опционально)
-    ...
-```
-
-Каждая роль может иметь свой `*_RULES.md` и свой `*_PARAMS.yaml`. Правила дописываются к промпту роли. Параметры из `*_PARAMS.yaml` появляются в TUI и попадают в `release_context`.
-
-**`QA_STAND_PARAMS.yaml`:**
 ```yaml
-params:
-  - key: my_param
-    description: Описание параметра
-    required: true
-    available:
-      - value1
-      - value2
+defaults:
+  runner: codex
+  service: my-service
+  tags:
+    - my-service          # проектный тег
+    - go                  # builtin тег
+
+available:
+  target_branch:          # список для выбора в TUI
+    - u1
+    - u1-1
+  namespace:
+    - my-service-u1
+    - my-service-u1-1
 ```
 
-Если параметры не нужны — файл можно не создавать.
+- `defaults` — начальные значения в TUI
+- `available` — если список заполнен, в TUI будет выпадашка; если пуст — свободный ввод
 
-### Кастомные правила проекта
+### tags/
 
-Файлы в `.devpipe/` добавляются к промптам ролей независимо от тегов:
+Кастомные теги проекта. Та же структура что и builtin `tags/` в этом репозитории.
 
 ```
 .devpipe/
-  DEVELOPER_RULES.md
-  QA_STAND_RULES.md
-  ...
+  config.yaml
+  tags/
+    my-service/
+      architect/
+        rules.md
+      developer/
+        rules.md
+      test_developer/
+        rules.md
+      qa_local/
+        rules.md
+      release/
+        rules.md
+      qa_stand/
+        rules.md
+        params.yaml       # параметры нужные qa_stand (опционально)
 ```
 
-## Конфигурация проекта
+Каждый файл `rules.md` дописывается к промпту соответствующей роли когда тег активен.
 
-Создай `.devpipe/config.yaml` в корне рабочего репозитория:
+---
 
+## Теги
+
+### Как работают
+
+При запуске роли devpipe собирает промпт так:
+
+```
+<базовый промпт роли>
+
+## Tag Rules: my-service
+<содержимое .devpipe/tags/my-service/<role>/rules.md>
+
+## Tag Rules: go
+<содержимое tags/go/<role>/rules.md>
+```
+
+Порядок поиска `rules.md` для тега:
+1. `.devpipe/tags/<tag>/<role>/rules.md` — кастомные теги проекта
+2. `tags/<tag>/<role>/rules.md` — builtin теги devpipe
+
+### params.yaml — параметры для роли
+
+Если роли нужны входные данные (например `dataset` для qa_stand), объяви их в `params.yaml` рядом с `rules.md`:
+
+```yaml
+# .devpipe/tags/my-service/qa_stand/params.yaml
+params:
+  - key: dataset
+    description: Test dataset
+    required: true
+    available:
+      - s4-3ds
+      - s4-no3ds
+```
+
+При запуске:
+- TUI покажет `Set dataset` как отдельный пункт меню
+- Выбранное значение попадёт в `release_context` который AI видит в промпте
+- В `rules.md` можно ссылаться на него: `{release_context.dataset}`
+
+### Builtin теги
+
+| Тег | Роли |
+|-----|------|
+| `go` | `developer`, `test_developer` |
+
+---
+
+## Пример: acquiring
+
+```
+acquiring-repo/
+  .devpipe/
+    config.yaml
+    tags/
+      acquiring-service/
+        architect/rules.md
+        developer/rules.md
+        test_developer/rules.md
+        qa_local/rules.md
+        release/rules.md
+        qa_stand/
+          rules.md        ← инструкции по pw-exchange-buy
+          params.yaml     ← dataset param
+```
+
+`config.yaml`:
 ```yaml
 defaults:
   runner: codex
   service: acquiring
   tags:
+    - acquiring-service
     - go
-    - exchange_buy
 
 available:
   target_branch:
@@ -221,93 +209,64 @@ available:
     - acquiring-u1
     - acquiring-u1-1
     - acquiring-u1-4
-
-tag_params:
-  exchange_buy:
-    defaults:
-      dataset: s4-3ds
-    available:
-      dataset:
-        - s4-3ds
-        - s4-no3ds
-        - s4-3ds-recurrent
 ```
 
-- `defaults` — начальные значения в TUI
-- `available` — списки для выбора в TUI (для `target_branch`, `namespace`); при пустом списке — свободный ввод
-- `tag_params` — переопределяет defaults/available для параметров конкретных тегов
+---
 
-Пример готового конфига для acquiring: [`acquiring.devpipe.yaml`](acquiring.devpipe.yaml).
+## CLI (без TUI)
 
-## Конфигурация оркестратора
-
-### Namespace mapping (`config/namespace-map.yaml`)
-
-```yaml
-services:
-  acquiring:
-    u1: acquiring-u1
-    u1-1: acquiring-u1-1
+```bash
+devpipe run \
+  --task "Описание задачи" \
+  --task-id MRC-123 \
+  --runner codex \
+  --target-branch u1 \
+  --service acquiring \
+  --tag acquiring-service,go \
+  --param dataset=s4-3ds \
+  --last-role qa_stand
 ```
 
-### Runners (`config/runners.yaml`)
+| Флаг | Описание |
+|------|---------|
+| `--task` | Текст задачи (обязательный) |
+| `--task-id` | ID в Jira (опционально, включает загрузку контекста) |
+| `--runner` | `codex` или `claude` |
+| `--target-branch` | Стенд / ветка деплоя |
+| `--service` | Имя сервиса |
+| `--namespace` | Kubernetes namespace (иначе из `config/namespace-map.yaml`) |
+| `--tag` | Теги через запятую |
+| `--param` | Параметр тега: `key=value`, можно несколько |
+| `--first-role` | С какой роли начать |
+| `--last-role` | На какой остановиться |
 
-```yaml
-runners:
-  codex:
-    command: ["codex"]
-    timeout: 300
-  claude:
-    command: ["claude"]
-    timeout: 300
-```
+---
 
-## Структура проекта
+## Структура репозитория
 
 ```
 devpipe/
-├── roles/                  # Определения ролей
+├── roles/              # базовые промпты и схемы вывода для каждой роли
 │   └── <role>/
-│       ├── prompt.md       # Инструкции для AI
-│       ├── role.yaml       # Метаданные (runner, retry_limit, inputs/outputs)
+│       ├── prompt.md
+│       ├── role.yaml
 │       └── output.schema.json
-├── tags/                   # Теги
-│   └── <tag>/
-│       ├── tag.yaml        # Параметры тега
-│       └── *_RULES.md      # Правила для ролей
-├── config/                 # Конфигурация оркестратора
-├── src/devpipe/            # Исходный код
-│   ├── cli.py              # CLI точка входа
-│   ├── tui.py              # Интерактивный TUI
-│   ├── app.py              # RunConfig и OrchestratorApp
-│   ├── tags.py             # Загрузка tag.yaml
-│   ├── project_config.py   # Загрузка .devpipe/config.yaml
-│   ├── runtime/            # State machine, события, retry
-│   ├── roles/              # Загрузка ролей, сборка промптов
-│   ├── runners/            # Адаптеры Codex и Claude
-│   ├── integrations/       # Jira, GitHub, Kubernetes, Git
-│   └── storage/            # Логи и артефакты
-└── runs/                   # Артефакты запусков (в .gitignore)
-```
-
-## Артефакты запуска
-
-Каждый запуск сохраняется в `runs/<run_id>/`:
-- `events.jsonl` — полный лог событий
-- `summary.json` — итоговый статус
-- `<role>/` — вывод каждой роли
-
-## Деградированные режимы
-
-- **Без `--task-id`** — Jira не читается, пайплайн работает только на тексте задачи
-- **Jira недоступна** — контекст пропускается, пайплайн продолжается
-- **Нет namespace** — падает только если нужны `release` или `qa_stand`
-- **GitHub workflow упал** — стоп после `release`
-- **Kubernetes timeout** — стоп перед `qa_stand`
-
-## Утилиты
-
-```bash
-devpipe inspect --roles-dir roles   # список ролей
-mise run test                       # тесты
+├── tags/               # builtin теги (универсальные, не проектные)
+│   └── go/
+│       ├── developer/rules.md
+│       └── test_developer/rules.md
+├── config/
+│   ├── runners.yaml        # настройки runners (команда, timeout)
+│   └── namespace-map.yaml  # service+branch → kubernetes namespace
+└── src/devpipe/
+    ├── cli.py
+    ├── tui.py              # интерактивное меню
+    ├── app.py              # RunConfig, OrchestratorApp
+    ├── tags.py             # загрузка тегов и params.yaml
+    ├── project_config.py   # загрузка .devpipe/config.yaml
+    ├── runtime/            # state machine, события, retry
+    ├── roles/              # загрузка ролей, сборка промптов
+    ├── runners/            # Codex и Claude адаптеры
+    ├── integrations/       # Jira, GitHub, Kubernetes, Git
+    └── storage/            # логи и артефакты запусков
 ```

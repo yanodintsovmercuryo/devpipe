@@ -1,8 +1,0 @@
-params:
-  - key: dataset
-    description: Test dataset for the exchange buy flow
-    required: true
-    available:
-      - s4-3ds
-      - s4-no3ds
-      - s4-3ds-recurrent
