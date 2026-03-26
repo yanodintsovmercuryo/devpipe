@@ -13,7 +13,6 @@ from devpipe.runtime.retry import RetryPolicy
 from devpipe.runtime.state import STAGE_ORDER, PipelineState
 from devpipe.runners.claude import ClaudeRunner
 from devpipe.runners.codex import CodexRunner
-from devpipe.runners.mock import MockRunner
 from devpipe.storage.artifact_store import ArtifactStore
 from devpipe.storage.config_store import ConfigStore
 from devpipe.storage.run_logger import RunLogger
@@ -62,6 +61,7 @@ class OrchestratorApp:
         self,
         config: RunConfig,
         on_stage_start: "Callable[[str], None] | None" = None,
+        on_stage_complete: "Callable[[str, dict], None] | None" = None,
     ) -> PipelineState:
         from devpipe.history import save_run
         save_run(config)
@@ -145,6 +145,9 @@ class OrchestratorApp:
             artifacts.write_stage_artifacts(role.name, result.structured_output)
             state.shared_context[f"{role.name}_log"] = str(transcript_path)
 
+            if on_stage_complete is not None:
+                on_stage_complete(role.name, result.structured_output)
+
             success = Event(EventType.STAGE_COMPLETED, stage=role.name, summary=result.summary)
             logger.log_event(success)
             state = self.engine.apply(state, success)
@@ -176,7 +179,6 @@ def build_default_app(base_dir: str | Path) -> OrchestratorApp:
     runners = {
         "codex": CodexRunner(command=codex_config.get("command", ["codex"]), timeout=int(codex_config.get("timeout", 300))),
         "claude": ClaudeRunner(command=claude_config.get("command", ["claude"]), timeout=int(claude_config.get("timeout", 300))),
-        "mock": MockRunner(),
     }
 
     namespace_map_path = base / "config" / "namespace-map.yaml"

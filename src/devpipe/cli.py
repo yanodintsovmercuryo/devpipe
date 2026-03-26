@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
-import select as _select
 import shutil
 import sys
 import termios
@@ -141,68 +139,62 @@ class _RunProgress:
         max_scroll = max(0, total - n_visible)
         self._scroll = max(0, min(self._scroll + delta, max_scroll))
 
-    def _process_input(self, n_visible: int) -> None:
-        """Read pending keystrokes/mouse events non-blocking and update _scroll."""
-        try:
-            fd = sys.stdin.fileno()
-            while _select.select([fd], [], [], 0)[0]:
-                ch = os.read(fd, 1)
-                self._kbd_buf += ch
+    def on_stdin(self, data: bytes) -> None:
+        """Called from PTY loop with raw stdin bytes; process and redraw immediately."""
+        self._kbd_buf += data
+        n = max(1, shutil.get_terminal_size().lines - _PANEL_LINES - 1)
+        self._process_kbd(n)
+        self._draw()
 
-                # bare ESC — wait briefly for more bytes
-                if self._kbd_buf == b"\x1b":
-                    if _select.select([fd], [], [], 0.02)[0]:
-                        continue
-                    else:
-                        self._kbd_buf = b""
-                        break
+    def _process_kbd(self, n_visible: int) -> None:
+        """Process accumulated keyboard/mouse bytes in _kbd_buf (no I/O)."""
+        while self._kbd_buf:
+            buf = self._kbd_buf
 
-                if self._kbd_buf.startswith(b"\x1b["):
-                    # SGR mouse: \x1b[<...M or \x1b[<...m  (variable length, ends with M/m)
-                    if len(self._kbd_buf) >= 3 and self._kbd_buf[2:3] == b"<":
-                        last = self._kbd_buf[-1:]
-                        if last not in (b"M", b"m"):
-                            if _select.select([fd], [], [], 0.02)[0]:
-                                continue
-                            self._kbd_buf = b""
-                            break
-                        seq = self._kbd_buf
-                        self._kbd_buf = b""
-                        try:
-                            inner = seq[3:-1].decode()   # e.g. "64;10;5"
-                            btn = int(inner.split(";")[0])
-                            if btn == 64:                # wheel up
-                                self._adjust_scroll(3, n_visible)
-                            elif btn == 65:              # wheel down
-                                self._adjust_scroll(-3, n_visible)
-                        except (ValueError, IndexError):
-                            pass
-                        break
-
-                    # wait for short sequences that aren't complete yet
-                    if len(self._kbd_buf) < 4:
-                        if _select.select([fd], [], [], 0.02)[0]:
-                            continue
-
-                seq = self._kbd_buf
-                self._kbd_buf = b""
-                total = len(self._buf)
-                max_scroll = max(0, total - n_visible)
-                if seq in (b"\x1b[A", b"k"):        # up arrow / k
-                    self._adjust_scroll(1, n_visible)
-                elif seq in (b"\x1b[B", b"j"):      # down arrow / j
-                    self._adjust_scroll(-1, n_visible)
-                elif seq == b"\x1b[5~":             # page up
-                    self._adjust_scroll(n_visible, n_visible)
-                elif seq == b"\x1b[6~":             # page down
-                    self._adjust_scroll(-n_visible, n_visible)
-                elif seq in (b"g", b"\x1b[H"):      # Home / g
-                    self._scroll = max_scroll
-                elif seq in (b"G", b"\x1b[F"):      # End / G
-                    self._scroll = 0
+            # Need more bytes for bare ESC
+            if buf == b"\x1b":
                 break
-        except (OSError, IOError):
-            pass
+
+            # SGR mouse: \x1b[<...M or \x1b[<...m
+            if buf.startswith(b"\x1b[") and len(buf) >= 3 and buf[2:3] == b"<":
+                if buf[-1:] not in (b"M", b"m"):
+                    break  # incomplete — wait for more
+                self._kbd_buf = b""
+                try:
+                    inner = buf[3:-1].decode()
+                    btn = int(inner.split(";")[0])
+                    if btn == 64:
+                        self._adjust_scroll(3, n_visible)
+                    elif btn == 65:
+                        self._adjust_scroll(-3, n_visible)
+                except (ValueError, IndexError):
+                    pass
+                continue
+
+            # Other \x1b[ sequences: wait until we have at least 4 bytes
+            if buf.startswith(b"\x1b[") and len(buf) < 4:
+                break
+
+            # Consume one sequence
+            self._kbd_buf = b""
+            if buf in (b"\x1b[A", b"k"):
+                self._adjust_scroll(1, n_visible)
+            elif buf in (b"\x1b[B", b"j"):
+                self._adjust_scroll(-1, n_visible)
+            elif buf == b"\x1b[5~":
+                self._adjust_scroll(n_visible, n_visible)
+            elif buf == b"\x1b[6~":
+                self._adjust_scroll(-n_visible, n_visible)
+            elif buf in (b"g", b"\x1b[H"):
+                total = len(self._buf)
+                self._scroll = max(0, total - n_visible)
+            elif buf in (b"G", b"\x1b[F"):
+                self._scroll = 0
+            break
+
+    def _process_input(self, n_visible: int) -> None:
+        """Process any buffered keyboard input (called from _draw)."""
+        self._process_kbd(n_visible)
 
     # ── in-place panel + window ───────────────────────────────────────────────
 
@@ -234,11 +226,13 @@ class _RunProgress:
         pad = max(0, inner - 2 - used)
 
         B = "\x1b[34m"; R = "\x1b[0m"; T = "\x1b[1;34m"
-        sys.stdout.write(f"\x1b[2K\r\n")
-        sys.stdout.write(f"\x1b[2K\r{B}╭{'─'*left_d}{T}{title}{B}{'─'*right_d}╮{R}\n")
-        sys.stdout.write(f"\x1b[2K\r{B}│{R} {content}{scroll_tag}{' '*pad} {B}│{R}\n")
-        sys.stdout.write(f"\x1b[2K\r{B}╰{'─'*inner}╯{R}\n")
-        sys.stdout.write(f"\x1b[2K\r\n")
+        sys.stdout.write(
+            f"\x1b[2K\r\n"
+            f"\x1b[2K\r{B}╭{'─'*left_d}{T}{title}{B}{'─'*right_d}╮{R}\n"
+            f"\x1b[2K\r{B}│{R} {content}{scroll_tag}{' '*pad} {B}│{R}\n"
+            f"\x1b[2K\r{B}╰{'─'*inner}╯{R}\n"
+            f"\x1b[2K\r\n"
+        )
 
     def _draw(self) -> None:
         n = max(1, shutil.get_terminal_size().lines - _PANEL_LINES - 1)
@@ -261,18 +255,71 @@ class _RunProgress:
             visible = display[-n:]
 
         sys.stdout.write("\x1b[H")  # cursor to top-left
+        out: list[str] = []
         self._draw_panel(spinner, scrolled=self._scroll > 0)
 
         for line in visible:
-            plain = re.sub(r"\x1b\[[0-9;]*m", "", line)
-            if len(plain) > w:
-                line = plain[: w - 1] + "…"
-            sys.stdout.write(f"\x1b[2K\r{line}\n")
+            out.append(f"\x1b[2K\r{line}\n")
 
-        sys.stdout.write("\x1b[J")
-        sys.stdout.write("\x1b[0m")
+        out.append("\x1b[J\x1b[0m")
+        sys.stdout.write("".join(out))
         sys.stdout.flush()
         self._drawn_n = len(visible)
+
+    # Keys to render per role (in order); None = skip
+    _RESULT_KEYS: dict[str, list[str]] = {
+        "architect":      ["summary", "decisions", "plan", "risks"],
+        "developer":      ["summary", "changed_files", "implementation_notes"],
+        "test_developer": ["summary", "tests", "covered_files"],
+        "qa_local":       ["summary", "verdict", "checks", "gaps"],
+        "release":        ["summary", "release_notes", "deploy_branch"],
+        "qa_stand":       ["summary", "verdict", "signals", "anomalies"],
+    }
+
+    def show_stage_result(self, stage: str, output: dict) -> None:
+        """Append a formatted result block to _buf after a stage completes."""
+        W = shutil.get_terminal_size().columns
+        keys = self._RESULT_KEYS.get(stage, ["summary"])
+        lines: list[str] = []
+        sep = f"\x1b[2;32m{'─' * (W - 2)}\x1b[0m"
+
+        lines.append("")
+        lines.append(f"\x1b[1;32m✓ {stage}\x1b[0m")
+        lines.append(sep)
+
+        for key in keys:
+            val = output.get(key)
+            if not val:
+                continue
+            label = f"\x1b[2m{key}\x1b[0m"
+            if isinstance(val, list):
+                lines.append(f"  {label}")
+                for item in val:
+                    item_str = str(item)
+                    max_w = W - 6
+                    while len(item_str) > max_w:
+                        lines.append(f"    \x1b[2m·\x1b[0m {item_str[:max_w]}")
+                        item_str = "  " + item_str[max_w:]
+                    lines.append(f"    \x1b[2m·\x1b[0m {item_str}")
+            else:
+                val_str = str(val)
+                max_w = W - len(key) - 6
+                if len(val_str) <= max_w:
+                    lines.append(f"  {label}  {val_str}")
+                else:
+                    # wrap long string values (e.g. summary)
+                    lines.append(f"  {label}")
+                    wrap_w = W - 6
+                    while val_str:
+                        lines.append(f"    {val_str[:wrap_w]}")
+                        val_str = val_str[wrap_w:]
+
+        lines.append(sep)
+        lines.append("")
+
+        self._buf.extend(lines)
+        self._scroll = 0  # jump to bottom to show result
+        self._draw()
 
     def finish(self, status: str, run_id: str) -> None:
         """Exit alternate screen and show a single status line in the main terminal."""
@@ -372,10 +419,15 @@ def main(argv: list[str] | None = None) -> int:
 
         progress = _RunProgress(active_stages, console)
         runner = app.runners[config.runner]
-        runner.output_callback = progress.on_output  # type: ignore[union-attr]
+        runner.output_callback = progress.on_output    # type: ignore[union-attr]
+        runner.stdin_callback = progress.on_stdin      # type: ignore[union-attr]
 
         try:
-            state = app.run(config, on_stage_start=progress.set_stage)
+            state = app.run(
+                config,
+                on_stage_start=progress.set_stage,
+                on_stage_complete=progress.show_stage_result,
+            )
         except KeyboardInterrupt:
             if _stdin_fd is not None and _old_term is not None:
                 termios.tcsetattr(_stdin_fd, termios.TCSADRAIN, _old_term)

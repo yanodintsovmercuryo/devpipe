@@ -45,6 +45,7 @@ def _run_with_pty(
     env: dict[str, str] | None,
     output_callback: "Callable[[str], None] | None" = None,
     forward_to_tty: bool = False,
+    stdin_callback: "Callable[[bytes], None] | None" = None,
 ) -> subprocess.CompletedProcess:
     """Run command with PTY for stdin+stdout so all TTY checks pass.
 
@@ -80,6 +81,7 @@ def _run_with_pty(
     write_done = False
     chunks: list[bytes] = []
     deadline = time.monotonic() + timeout
+    last_heartbeat = time.monotonic()
 
     while True:
         remaining = deadline - time.monotonic()
@@ -93,7 +95,18 @@ def _run_with_pty(
             raise subprocess.TimeoutExpired(command, timeout)
 
         wlist = [] if write_done else [master_fd]
-        r, w, _ = select.select([master_fd], wlist, [], min(remaining, 0.5))
+        stdin_fd = sys.stdin.fileno() if stdin_callback and sys.stdin.isatty() else None
+        rlist = [master_fd] + ([stdin_fd] if stdin_fd is not None else [])
+        r, w, _ = select.select(rlist, wlist, [], min(remaining, 0.05))
+
+        # Forward stdin bytes to callback (keyboard/mouse for scroll)
+        if stdin_fd is not None and stdin_fd in r:
+            try:
+                kbd = os.read(stdin_fd, 64)
+                if kbd:
+                    stdin_callback(kbd)
+            except OSError:
+                pass
 
         # Write a chunk of input when the master fd is writable
         if w and not write_done:
@@ -107,7 +120,7 @@ def _run_with_pty(
                 write_done = True
 
         # Read output
-        if r:
+        if master_fd in r:
             try:
                 data = os.read(master_fd, 4096)
                 if data:
@@ -118,6 +131,12 @@ def _run_with_pty(
                         output_callback(data.decode(errors="replace"))
             except OSError:
                 break
+
+        # Heartbeat: keep spinner alive when no output arrives
+        now = time.monotonic()
+        if output_callback and now - last_heartbeat >= 0.1:
+            output_callback("")
+            last_heartbeat = now
 
         if proc.poll() is not None:
             # Drain any remaining bytes.
@@ -157,6 +176,7 @@ class BaseCliRunner:
     use_pty: bool = False
     forward_to_tty: bool = False
     output_callback: "Callable[[str], None] | None" = None
+    stdin_callback: "Callable[[bytes], None] | None" = None
 
     def build_prompt(self, envelope: TaskEnvelope) -> str:
         return (
@@ -187,6 +207,7 @@ class BaseCliRunner:
                     env=self.env or None,
                     output_callback=self.output_callback,
                     forward_to_tty=self.forward_to_tty,
+                    stdin_callback=self.stdin_callback,
                 )
             else:
                 completed = self.exec_fn(

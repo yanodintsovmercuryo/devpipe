@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 
-from devpipe.cli import build_parser, main
+from devpipe.cli import _RunProgress, build_parser, main
 
 
 def test_run_command_parses_required_flags(tmp_path: Path) -> None:
@@ -45,3 +47,24 @@ def test_inspect_command_prints_role_names(tmp_path: Path, capsys: pytest.Captur
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "architect" in captured.out
+
+
+def test_run_progress_draw_writes_cursor_home_before_panel(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("devpipe.cli.shutil.get_terminal_size", lambda: os.terminal_size((80, 24)))
+
+    progress = _RunProgress(["architect", "developer"], Console())
+    progress.current_stage = "architect"
+    progress._buf = ["line1"]
+
+    progress._draw()
+
+    captured = capsys.readouterr().out
+    panel_idx = captured.index("╭")
+    line_idx = captured.index("line1")
+    first_home_idx = captured.index("\x1b[H")
+
+    assert first_home_idx < panel_idx < line_idx
+    assert captured.find("\x1b[H", panel_idx) == -1
