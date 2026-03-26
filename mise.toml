@@ -1,0 +1,14 @@
+[tools]
+python = "3.14"
+
+[tasks.install]
+description = "Install devpipe in editable mode"
+run = "pip install -e ."
+
+[tasks.test]
+description = "Run test suite"
+run = "pytest"
+
+[tasks.roles]
+description = "List available roles"
+run = "python -m devpipe inspect --roles-dir roles"
