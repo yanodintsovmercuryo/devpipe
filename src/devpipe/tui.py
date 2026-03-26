@@ -84,7 +84,7 @@ def _checkbox_with_apply(
         items.append(Separator(" "))
         items.append(questionary.Choice(title="Apply", value="__apply__"))
 
-        val = questionary.select(prompt, choices=items, style=style, default=cursor).ask()
+        val = questionary.select(prompt, choices=items, style=style, default=cursor, instruction=" ").ask()
         if val is None:
             return None
         if val == "__apply__":
@@ -129,7 +129,7 @@ def _multi_param_select(
         items.append(questionary.Choice(title="Add custom value...", value="__custom__"))
         items.append(questionary.Choice(title="Apply", value="__apply__"))
 
-        val = questionary.select(prompt, choices=items, style=style, default=cursor, qmark="").ask()
+        val = questionary.select(prompt, choices=items, style=style, default=cursor, qmark="", instruction=" ").ask()
         if val is None:
             return None
         if val == "__apply__":
@@ -164,7 +164,7 @@ def _select_or_text(prompt: str, options: list[str], default: str, style) -> str
         val = questionary.select(
             prompt, choices=choices,
             default=default if default in options else choices[0],
-            style=style, qmark="",
+            style=style, qmark="", instruction=" ",
         ).ask()
         if val is None:
             return None
@@ -254,7 +254,7 @@ def _history_menu(history: list[dict], console: Console) -> dict | None:
             else:
                 toks.append(("fg:#888888", f"     {label}\n"))
         toks.append(("", "\n"))
-        toks.append(("fg:#555555", "  Enter — run   Esc — cancel\n"))
+        toks.append(("fg:#555555", "  Enter — load   Esc — cancel\n"))
         return toks
 
     kb = KeyBindings()
@@ -426,14 +426,14 @@ def run_tui(base_dir: Path) -> RunConfig | None:
         choices.append(_c("Set last role",  "Last pipeline stage to run (default: qa_stand if target branch set, else qa_local)"))
         choices.append(Separator(" "))
         history = load_history()
-        hist_desc = "\n\n  Re-run a previous pipeline invocation" if history else "\n\n  No history yet — complete a run first"
-        choices.append(questionary.Choice("▶ Run from history", description=hist_desc))
+        hist_desc = "\n\n  Load a previous run into the form" if history else "\n\n  No history yet — complete a run first"
+        choices.append(questionary.Choice("History", description=hist_desc))
         run_desc = "\n\n  Start the pipeline with current configuration" if cfg["task"] else "\n\n  Task is required — use Set task first"
-        choices.append(questionary.Choice("▶ Run", description=run_desc))
+        choices.append(questionary.Choice("Run", description=run_desc))
 
         valid_values = [c.value if isinstance(c, questionary.Choice) else c for c in choices if not isinstance(c, Separator)]
         default_cursor = menu_cursor if menu_cursor in valid_values else None
-        choice = questionary.select("", choices=choices, style=_STYLE, use_shortcuts=False, qmark="", default=default_cursor).ask()
+        choice = questionary.select("", choices=choices, style=_STYLE, use_shortcuts=False, qmark="", default=default_cursor, instruction=" ").ask()
         if choice is None:
             return None
         menu_cursor = choice
@@ -452,7 +452,7 @@ def run_tui(base_dir: Path) -> RunConfig | None:
 
         elif choice == "Set runner":
             _input_header()
-            val = questionary.select("Runner:", choices=["codex", "claude"], default=cfg["runner"], style=_STYLE, qmark="").ask()
+            val = questionary.select("Runner:", choices=["codex", "claude", "mock"], default=cfg["runner"], style=_STYLE, qmark="", instruction=" ").ask()
             if val is not None:
                 cfg["runner"] = val
 
@@ -534,7 +534,7 @@ def run_tui(base_dir: Path) -> RunConfig | None:
             current = cfg["first_role"] or "architect"
             val = questionary.select(
                 "First role:", choices=allowed,
-                default=current if current in allowed else allowed[0], style=_STYLE, qmark="",
+                default=current if current in allowed else allowed[0], style=_STYLE, qmark="", instruction=" ",
             ).ask()
             if val is not None:
                 cfg["first_role"] = "" if val == "architect" else val
@@ -547,31 +547,32 @@ def run_tui(base_dir: Path) -> RunConfig | None:
             current = cfg["last_role"] or _effective_last(cfg)
             val = questionary.select(
                 "Last role:", choices=allowed,
-                default=current if current in allowed else allowed[-1], style=_STYLE, qmark="",
+                default=current if current in allowed else allowed[-1], style=_STYLE, qmark="", instruction=" ",
             ).ask()
             if val is not None:
                 cfg["last_role"] = val
 
-        elif choice == "▶ Run from history":
+        elif choice == "History":
             if not history:
                 continue
             picked = _history_menu(history, console)
             if picked:
-                return RunConfig(
-                    task_id=picked.get("task_id") or None,
-                    task=picked.get("task", ""),
-                    runner=picked.get("runner", "codex"),
-                    target_branch=picked.get("target_branch") or None,
-                    namespace=picked.get("namespace") or None,
-                    service=picked.get("service") or None,
-                    tags=picked.get("tags") or [],
-                    extra_params=picked.get("extra_params") or None,
-                    first_role=picked.get("first_role") or None,
-                    last_role=picked.get("last_role") or None,
-                )
+                cfg["task"] = picked.get("task") or ""
+                cfg["task_id"] = picked.get("task_id") or ""
+                cfg["runner"] = picked.get("runner") or "codex"
+                cfg["target_branch"] = picked.get("target_branch") or ""
+                cfg["namespace"] = picked.get("namespace") or ""
+                cfg["service"] = picked.get("service") or ""
+                cfg["tags"] = picked.get("tags") or []
+                cfg["extra_params"] = dict(picked.get("extra_params") or {})
+                cfg["first_role"] = picked.get("first_role") or ""
+                cfg["last_role"] = picked.get("last_role") or ""
+                tag_params_meta = _load_tag_params()
+                menu_cursor = "Run"
 
-        elif choice == "▶ Run":
+        elif choice == "Run":
             if not cfg["task"]:
+                menu_cursor = "Set task"
                 continue
             return RunConfig(
                 task_id=cfg["task_id"] or None,

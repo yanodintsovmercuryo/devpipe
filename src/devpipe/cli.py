@@ -5,6 +5,8 @@ import json
 import re
 import shutil
 import sys
+import termios
+import tty
 from pathlib import Path
 
 from rich.console import Console
@@ -106,24 +108,7 @@ class _RunProgress:
         self._carry = ""
         self._current_line = ""
         self._tick = 0
-        self._area_drawn = False
-
-        idx = self.stages.index(stage) if stage in self.stages else -1
-        parts: list[str] = []
-        for i, s in enumerate(self.stages):
-            if i < idx:
-                parts.append(f"[dim green]{s}[/dim green]")
-            elif s == stage:
-                parts.append(f"[bold cyan]{s}[/bold cyan]")
-            else:
-                parts.append(f"[dim]{s}[/dim]")
-        self._console.print()
-        self._console.print(Panel(
-            Text.from_markup("  ".join(parts)),
-            border_style="blue",
-            title="[bold blue]devpipe[/bold blue]",
-        ))
-        self._console.file.flush()
+        # keep _area_drawn so _draw() reuses the same screen area instead of appending below
         self._draw()
 
     # ── output streaming ─────────────────────────────────────────────────────
@@ -142,33 +127,68 @@ class _RunProgress:
         self._tick += 1
         self._draw()
 
-    # ── in-place window ───────────────────────────────────────────────────────
+    # ── in-place panel + window ───────────────────────────────────────────────
+
+    def _draw_panel(self, spinner: str) -> None:
+        W = shutil.get_terminal_size().columns
+        idx = self.stages.index(self.current_stage) if self.current_stage in self.stages else -1
+        parts: list[str] = []
+        for i, s in enumerate(self.stages):
+            if i < idx:
+                parts.append(f"\x1b[2;32m{s}\x1b[0m")          # dim green: done
+            elif s == self.current_stage:
+                parts.append(f"\x1b[1;36m{spinner} {s}\x1b[0m") # bold cyan + spinner
+            else:
+                parts.append(f"\x1b[2m{s}\x1b[0m")              # dim: pending
+        content = "  ".join(parts)
+        plain = re.sub(r"\x1b\[[0-9;:]*m", "", content)
+
+        title = " devpipe "
+        inner = W - 2
+        left_d = max(0, (inner - len(title)) // 2)
+        right_d = max(0, inner - len(title) - left_d)
+        pad = max(0, inner - 2 - len(plain))
+
+        B = "\x1b[34m"; R = "\x1b[0m"; T = "\x1b[1;34m"
+        sys.stdout.write(f"\x1b[2K\r\n")
+        sys.stdout.write(f"\x1b[2K\r{B}╭{'─'*left_d}{T}{title}{B}{'─'*right_d}╮{R}\n")
+        sys.stdout.write(f"\x1b[2K\r{B}│{R} {content}{' '*pad} {B}│{R}\n")
+        sys.stdout.write(f"\x1b[2K\r{B}╰{'─'*inner}╯{R}\n")
+        sys.stdout.write(f"\x1b[2K\r\n")
 
     def _draw(self) -> None:
         n = max(1, shutil.get_terminal_size().lines - _PANEL_LINES - 1)
         w = max(shutil.get_terminal_size().columns - 4, 20)
-
-        if self._area_drawn:
-            sys.stdout.write(f"\x1b[{self._drawn_n + 1}A")
-
         spinner = _SPINNER[self._tick % len(_SPINNER)]
-        sys.stdout.write(f"\x1b[2K\r  {spinner}  \x1b[2m{self.current_stage}\x1b[0m\n")
+
+        sys.stdout.write("\x1b[H")  # cursor to top-left — always draw from position 1,1
+        self._draw_panel(spinner)
 
         display = self._buf + ([self._current_line] if self._current_line.strip() else [])
-        trimmed = display[-n:]  # last N lines (newest)
-        visible = trimmed + [""] * (n - len(trimmed))  # pad to N with blanks at end
+        visible = display[-n:]
         for line in visible:
-            # Truncate visible width (strip SGR for measuring, keep for display)
             plain = re.sub(r"\x1b\[[0-9;]*m", "", line)
             if len(plain) > w:
-                # Hard-truncate by visible chars — simple approximation
                 line = plain[: w - 1] + "…"
             sys.stdout.write(f"\x1b[2K\r{line}\n")
 
-        sys.stdout.write("\x1b[0m")  # reset any unclosed color codes
+        sys.stdout.write("\x1b[J")  # clear from cursor to end of screen
+        sys.stdout.write("\x1b[0m")
         sys.stdout.flush()
-        self._area_drawn = True
-        self._drawn_n = n
+        self._drawn_n = len(visible)
+
+    def finish(self, status: str, run_id: str) -> None:
+        """Exit alternate screen and show a single status line in the main terminal."""
+        sys.stdout.write("\x1b[?1049l")  # exit alternate screen → back to main terminal
+
+        if status == "completed":
+            line = f"\x1b[1;32m✓  completed\x1b[0m  \x1b[2m{run_id}\x1b[0m"
+        else:
+            line = f"\x1b[1;31m✗  failed\x1b[0m  \x1b[2m{run_id}\x1b[0m"
+
+        sys.stdout.write(f"{line}\n")
+        sys.stdout.write("\x1b[0m")
+        sys.stdout.flush()
 
 
 class CommaSeparatedTags(argparse.Action):
@@ -188,7 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Run full pipeline")
     run_parser.add_argument("--task-id", default=None)
     run_parser.add_argument("--task", required=True)
-    run_parser.add_argument("--runner", required=True, choices=["codex", "claude"])
+    run_parser.add_argument("--runner", required=True, choices=["codex", "claude", "mock"])
     run_parser.add_argument("--roles-dir", default=None)
     run_parser.add_argument("--runs-dir", default=None)
     run_parser.add_argument("--target-branch")
@@ -213,9 +233,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         from devpipe.tui import run_tui
         base_dir = Path(args.roles_dir).resolve().parents[0] if getattr(args, "roles_dir", None) else Path(__file__).resolve().parents[2]
-        config = run_tui(base_dir)
+
+        _stdin_fd = sys.stdin.fileno() if sys.stdin.isatty() else None
+        _old_term = termios.tcgetattr(_stdin_fd) if _stdin_fd is not None else None
+
+        sys.stdout.write("\x1b[?1049h")  # enter alternate screen
+        sys.stdout.flush()
+
+        try:
+            config = run_tui(base_dir)
+        except KeyboardInterrupt:
+            config = None
+        except Exception:
+            sys.stdout.write("\x1b[?1049l")
+            sys.stdout.flush()
+            raise
+
         if config is None:
+            sys.stdout.write("\x1b[?1049l")  # exit alternate screen — back to normal terminal
+            sys.stdout.flush()
             return 0
+
         app = build_default_app(base_dir)
 
         first = config.first_role or STAGE_ORDER[0]
@@ -225,25 +263,41 @@ def main(argv: list[str] | None = None) -> int:
         active_stages = STAGE_ORDER[fi: li + 1]
 
         console = Console()
-        console.clear()
+        sys.stdout.write("\x1b[?25l")  # hide cursor
+        sys.stdout.flush()
+
+        # Disable echo so keystrokes don't appear on screen during run
+        if _stdin_fd is not None:
+            tty.setcbreak(_stdin_fd)  # cbreak: no echo, but Ctrl+C still sends SIGINT
+
         progress = _RunProgress(active_stages, console)
         runner = app.runners[config.runner]
         runner.output_callback = progress.on_output  # type: ignore[union-attr]
 
-        sys.stdout.write("\x1b[?25l")  # hide cursor
-        sys.stdout.flush()
         try:
             state = app.run(config, on_stage_start=progress.set_stage)
         except KeyboardInterrupt:
+            if _stdin_fd is not None and _old_term is not None:
+                termios.tcsetattr(_stdin_fd, termios.TCSADRAIN, _old_term)
+            sys.stdout.write("\x1b[?1049l")  # exit alternate screen
             sys.stdout.write("\x1b[?25h\n")
             sys.stdout.flush()
             console.print("[dim]interrupted[/dim]")
             return 130
+        except Exception:
+            if _stdin_fd is not None and _old_term is not None:
+                termios.tcsetattr(_stdin_fd, termios.TCSADRAIN, _old_term)
+            sys.stdout.write("\x1b[?1049l")
+            sys.stdout.write("\x1b[?25h\n")
+            sys.stdout.flush()
+            raise
         finally:
+            if _stdin_fd is not None and _old_term is not None:
+                termios.tcsetattr(_stdin_fd, termios.TCSADRAIN, _old_term)
             sys.stdout.write("\x1b[?25h")
             sys.stdout.flush()
 
-        print(json.dumps({"run_id": state.run_id, "status": state.status, "current_stage": state.current_stage}))
+        progress.finish(state.status, state.run_id)
         return 0
 
     if args.command == "inspect":

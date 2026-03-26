@@ -13,6 +13,7 @@ from devpipe.runtime.retry import RetryPolicy
 from devpipe.runtime.state import STAGE_ORDER, PipelineState
 from devpipe.runners.claude import ClaudeRunner
 from devpipe.runners.codex import CodexRunner
+from devpipe.runners.mock import MockRunner
 from devpipe.storage.artifact_store import ArtifactStore
 from devpipe.storage.config_store import ConfigStore
 from devpipe.storage.run_logger import RunLogger
@@ -175,6 +176,7 @@ def build_default_app(base_dir: str | Path) -> OrchestratorApp:
     runners = {
         "codex": CodexRunner(command=codex_config.get("command", ["codex"]), timeout=int(codex_config.get("timeout", 300))),
         "claude": ClaudeRunner(command=claude_config.get("command", ["claude"]), timeout=int(claude_config.get("timeout", 300))),
+        "mock": MockRunner(),
     }
 
     namespace_map_path = base / "config" / "namespace-map.yaml"
