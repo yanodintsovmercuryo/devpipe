@@ -7,15 +7,6 @@ import yaml
 
 BUILTIN_TAGS_DIR = Path(__file__).resolve().parents[3] / "tags"
 
-PARAMS_FILE_NAMES = {
-    "architect": "ARCHITECT_PARAMS.yaml",
-    "developer": "DEVELOPER_PARAMS.yaml",
-    "test_developer": "TEST_DEVELOPER_PARAMS.yaml",
-    "qa_local": "QA_LOCAL_PARAMS.yaml",
-    "release": "RELEASE_PARAMS.yaml",
-    "qa_stand": "QA_STAND_PARAMS.yaml",
-}
-
 
 @dataclass
 class TagParam:
@@ -28,7 +19,6 @@ class TagParam:
 @dataclass
 class TagDefinition:
     name: str
-    description: str = ""
     params_by_role: dict[str, list[TagParam]] = field(default_factory=dict)
 
     @property
@@ -41,9 +31,6 @@ class TagDefinition:
                     seen.add(p.key)
                     result.append(p)
         return result
-
-    def params_for_role(self, role: str) -> list[TagParam]:
-        return self.params_by_role.get(role, [])
 
 
 def _load_params_file(path: Path) -> list[TagParam]:
@@ -61,33 +48,49 @@ def _load_params_file(path: Path) -> list[TagParam]:
     ]
 
 
-def load_tag_definition(tag_name: str, tags_dir: Path = BUILTIN_TAGS_DIR) -> TagDefinition | None:
-    tag_dir = tags_dir / tag_name
-    if not tag_dir.exists():
-        return None
-
-    description = ""
-    tag_yaml = tag_dir / "tag.yaml"
-    if tag_yaml.exists():
-        data = yaml.safe_load(tag_yaml.read_text(encoding="utf-8")) or {}
-        description = data.get("description", "")
-
-    params_by_role = {}
-    for role, filename in PARAMS_FILE_NAMES.items():
-        params = _load_params_file(tag_dir / filename)
-        if params:
-            params_by_role[role] = params
-
-    return TagDefinition(name=tag_name, description=description, params_by_role=params_by_role)
+def _load_from_dir(tag_name: str, tag_dir: Path) -> TagDefinition:
+    params_by_role: dict[str, list[TagParam]] = {}
+    if tag_dir.exists():
+        for role_dir in tag_dir.iterdir():
+            if role_dir.is_dir():
+                params = _load_params_file(role_dir / "params.yaml")
+                if params:
+                    params_by_role[role_dir.name] = params
+    return TagDefinition(name=tag_name, params_by_role=params_by_role)
 
 
-def load_tag_definitions(tag_names: list[str], tags_dir: Path = BUILTIN_TAGS_DIR) -> dict[str, TagDefinition]:
-    result = {}
-    for name in tag_names:
-        defn = load_tag_definition(name, tags_dir)
-        if defn:
-            result[name] = defn
+def load_tag_definition(tag_name: str, tags_dir: Path) -> TagDefinition:
+    return _load_from_dir(tag_name, tags_dir / tag_name)
+
+
+def _tag_names_in(tags_dir: Path) -> list[str]:
+    if not tags_dir.exists():
+        return []
+    return sorted(p.name for p in tags_dir.iterdir() if p.is_dir())
+
+
+def load_available_tags(cwd: Path | None = None) -> dict[str, TagDefinition]:
+    """Load all available tags: custom (.devpipe/tags/) first, then builtin (tags/)."""
+    cwd = cwd or Path.cwd()
+    custom_dir = cwd / ".devpipe" / "tags"
+    result: dict[str, TagDefinition] = {}
+
+    for name in _tag_names_in(custom_dir):
+        result[name] = _load_from_dir(name, custom_dir / name)
+
+    for name in _tag_names_in(BUILTIN_TAGS_DIR):
+        if name not in result:
+            result[name] = _load_from_dir(name, BUILTIN_TAGS_DIR / name)
+
     return result
+
+
+def load_tag_definitions(
+    tag_names: list[str],
+    cwd: Path | None = None,
+) -> dict[str, TagDefinition]:
+    all_tags = load_available_tags(cwd)
+    return {name: all_tags[name] for name in tag_names if name in all_tags}
 
 
 def collect_params(

@@ -6,6 +6,8 @@ from pathlib import Path
 from devpipe.roles.loader import RoleDefinition
 from devpipe.runtime.state import PipelineState
 
+BUILTIN_TAGS_DIR = Path(__file__).resolve().parents[3] / "tags"
+
 
 @dataclass
 class TaskEnvelope:
@@ -16,18 +18,6 @@ class TaskEnvelope:
     artifacts: dict[str, object]
     constraints: list[str]
     output_schema: dict[str, object]
-
-
-RULES_FILE_NAMES = {
-    "architect": "ARCHITECT_RULES.md",
-    "developer": "DEVELOPER_RULES.md",
-    "test_developer": "TEST_DEVELOPER_RULES.md",
-    "qa_local": "QA_LOCAL_RULES.md",
-    "release": "RELEASE_RULES.md",
-    "qa_stand": "QA_STAND_RULES.md",
-}
-
-BUILTIN_TAGS_DIR = Path(__file__).resolve().parents[3] / "tags"
 
 
 @dataclass
@@ -42,10 +32,8 @@ class TaskResult:
     transcript: str = ""
 
 
-def _read_rules_file(path: Path) -> str:
-    if not path.exists():
-        return ""
-    return path.read_text(encoding="utf-8").strip()
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
 
 def compose_role_instructions(
@@ -58,25 +46,27 @@ def compose_role_instructions(
     if project_root is None:
         return instructions
 
-    composer_dir = Path(project_root) / ".devpipe"
-    rules_file_name = RULES_FILE_NAMES.get(role_name)
-    if not rules_file_name:
-        return instructions
-
+    root = Path(project_root)
     sections: list[str] = []
 
-    role_rules = _read_rules_file(composer_dir / rules_file_name)
-    if role_rules:
-        sections.append(f"## Project-Specific Rules\n\n{role_rules}")
+    # Project-level rules: .devpipe/<role>/rules.md
+    project_rules = _read(root / ".devpipe" / role_name / "rules.md")
+    if project_rules:
+        sections.append(f"## Project Rules\n\n{project_rules}")
 
     for tag in tags or []:
-        tagged_rules = _read_rules_file(BUILTIN_TAGS_DIR / tag / rules_file_name)
-        if tagged_rules:
-            sections.append(f"## Tagged Rules: {tag}\n\n{tagged_rules}")
+        # Custom tag rules: .devpipe/tags/<tag>/<role>/rules.md
+        custom = _read(root / ".devpipe" / "tags" / tag / role_name / "rules.md")
+        if custom:
+            sections.append(f"## Tag Rules: {tag}\n\n{custom}")
+            continue
+        # Builtin tag rules: tags/<tag>/<role>/rules.md
+        builtin = _read(BUILTIN_TAGS_DIR / tag / role_name / "rules.md")
+        if builtin:
+            sections.append(f"## Tag Rules: {tag}\n\n{builtin}")
 
     if not sections:
         return instructions
-
     return f"{instructions}\n\n" + "\n\n".join(sections)
 
 

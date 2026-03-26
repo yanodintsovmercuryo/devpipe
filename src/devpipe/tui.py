@@ -12,11 +12,9 @@ from rich.table import Table
 from rich.text import Text
 
 from devpipe.app import RunConfig
-from devpipe.project_config import ProjectConfig, load_project_config
+from devpipe.project_config import load_project_config
 from devpipe.runtime.state import STAGE_ORDER
-from devpipe.tags import collect_params, load_tag_definitions
-
-BUILTIN_TAGS_DIR = Path(__file__).resolve().parents[3] / "tags"
+from devpipe.tags import collect_params, load_available_tags, load_tag_definitions
 
 
 def _git_branch() -> str:
@@ -30,13 +28,6 @@ def _git_branch() -> str:
 def _task_id_from_branch(branch: str) -> str:
     m = re.match(r"^([A-Z]+-[0-9]+)", branch)
     return m.group(1) if m else ""
-
-
-def _available_tag_names(base_dir: Path) -> list[str]:
-    tags_dir = base_dir / "tags"
-    if not tags_dir.exists():
-        return []
-    return sorted(p.name for p in tags_dir.iterdir() if p.is_dir())
 
 
 def _effective_last(cfg: dict) -> str:
@@ -102,7 +93,10 @@ _STYLE = questionary.Style([
 def run_tui(base_dir: Path) -> RunConfig | None:
     console = Console()
     project_cfg = load_project_config()
-    available_tag_names = _available_tag_names(base_dir)
+    all_tags = load_available_tags()
+    available_tag_names = list(all_tags.keys())
+
+    default_tags = [t for t in project_cfg.default("tags", []) if t in all_tags]
 
     cfg: dict = {
         "task": "",
@@ -111,14 +105,14 @@ def run_tui(base_dir: Path) -> RunConfig | None:
         "target_branch": project_cfg.default("target_branch", ""),
         "service": project_cfg.default("service", "acquiring"),
         "namespace": project_cfg.default("namespace", ""),
-        "tags": list(project_cfg.default("tags", [])),
+        "tags": default_tags,
         "extra_params": {},
         "first_role": "",
         "last_role": "",
     }
 
     def _load_tag_params() -> list:
-        tag_defs = load_tag_definitions(cfg["tags"], BUILTIN_TAGS_DIR)
+        tag_defs = load_tag_definitions(cfg["tags"])
         return collect_params(tag_defs, project_cfg.tag_params)
 
     def _init_tag_param_defaults(tag_params_meta: list) -> None:
@@ -197,8 +191,9 @@ def run_tui(base_dir: Path) -> RunConfig | None:
 
         elif choice == "Set tags":
             prev_tags = set(cfg["tags"])
+            safe_default = [t for t in cfg["tags"] if t in available_tag_names]
             val = questionary.checkbox(
-                "Tags:", choices=available_tag_names, default=cfg["tags"], style=_STYLE,
+                "Tags:", choices=available_tag_names, default=safe_default, style=_STYLE,
             ).ask()
             if val is not None:
                 cfg["tags"] = val
@@ -208,8 +203,8 @@ def run_tui(base_dir: Path) -> RunConfig | None:
                 # Clean up params from removed tags
                 removed = prev_tags - set(val)
                 if removed:
-                    removed_defs = load_tag_definitions(list(removed), BUILTIN_TAGS_DIR)
-                    removed_keys = {p.key for d in removed_defs.values() for p in d.params}
+                    removed_defs = load_tag_definitions(list(removed))
+                    removed_keys = {p.key for d in removed_defs.values() for p in d.all_params}
                     for k in removed_keys:
                         cfg["extra_params"].pop(k, None)
 
