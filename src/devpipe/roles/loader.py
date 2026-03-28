@@ -8,6 +8,10 @@ import yaml
 
 from devpipe.runners.profile_map import EFFORT_LEVELS, MODEL_LEVELS
 
+_LEVEL_ALIASES = {
+    "medium": "middle",
+}
+
 
 @dataclass
 class RoleDefinition:
@@ -29,8 +33,8 @@ def load_roles(roles_dir: str | Path) -> dict[str, RoleDefinition]:
         role_meta = yaml.safe_load((role_dir / "role.yaml").read_text(encoding="utf-8"))
         prompt = (role_dir / "prompt.md").read_text(encoding="utf-8") if (role_dir / "prompt.md").exists() else ""
         schema = json.loads((role_dir / "output.schema.json").read_text(encoding="utf-8")) if (role_dir / "output.schema.json").exists() else {}
-        model = role_meta.get("model", "middle")
-        effort = role_meta.get("effort", "middle")
+        model = _LEVEL_ALIASES.get(role_meta.get("model", "middle"), role_meta.get("model", "middle"))
+        effort = _LEVEL_ALIASES.get(role_meta.get("effort", "middle"), role_meta.get("effort", "middle"))
         if model not in MODEL_LEVELS:
             raise ValueError(f"Role '{role_meta['name']}' has unsupported model level '{model}'")
         if effort not in EFFORT_LEVELS:

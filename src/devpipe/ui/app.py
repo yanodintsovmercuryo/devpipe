@@ -6,6 +6,7 @@ Operator Console visual style: graphite dark, cyan/teal accents.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,9 @@ class DevpipeTextualApp(App):
         self._project_root = project_root or Path.cwd()
         self._ui_state = UIState()
         self._result_config: RunConfig | None = None
+        self._runtime_app: OrchestratorApp | None = None
+        self._run_session: RunSession | None = None
+        self._run_thread: threading.Thread | None = None
 
     def get_default_screen(self) -> ConfigScreen:
         return ConfigScreen(self._ui_state)
@@ -192,3 +196,125 @@ class DevpipeTextualApp(App):
             first_role=v.get("first_role") or None,
             last_role=v.get("last_role") or None,
         )
+
+    def _selected_run_stages(self) -> list[str]:
+        stages = list(self._ui_state.form.available_stages)
+        if not stages:
+            return []
+        first = self._ui_state.form.values.get("first_role") or stages[0]
+        last = self._ui_state.form.values.get("last_role") or stages[-1]
+        if first in stages and last in stages:
+            first_index = stages.index(first)
+            last_index = stages.index(last)
+            if first_index <= last_index:
+                return stages[first_index:last_index + 1]
+        return stages
+
+    def _ensure_runtime_app(self) -> OrchestratorApp:
+        if self._runtime_app is None:
+            bundle_root = Path(__file__).resolve().parents[3]
+            self._runtime_app = build_default_app(bundle_root)
+        return self._runtime_app
+
+    def _launch_run_session(self, config: RunConfig) -> None:
+        runtime_app = self._ensure_runtime_app()
+
+        def worker() -> None:
+            session = RunSession(runtime_app)
+            self._run_session = session
+
+            def on_event(event: RunEvent) -> None:
+                self.call_from_thread(self._handle_run_event, event)
+
+            try:
+                session.execute(config, on_event)
+            except Exception:
+                pass
+            finally:
+                self._run_session = None
+
+        self._run_thread = threading.Thread(target=worker, daemon=False)
+        self._run_thread.start()
+
+    def exit(self, result: object | None = None, return_code: int = 0, message: object | None = None) -> None:
+        session = self._run_session
+        thread = self._run_thread
+        if session is not None:
+            session.cancel()
+        if thread is not None and thread.is_alive() and thread.ident != threading.get_ident():
+            thread.join()
+        self._run_thread = None
+        super().exit(result=result, return_code=return_code, message=message)
+
+    def cancel_active_run_async(self, on_complete: Callable[[], None] | None = None) -> None:
+        session = self._run_session
+        thread = self._run_thread
+        if session is None or thread is None or not thread.is_alive():
+            self._run_thread = None
+            if on_complete is not None:
+                on_complete()
+            return
+
+        def worker() -> None:
+            session.cancel()
+            if thread.ident != threading.get_ident():
+                thread.join()
+            self._run_thread = None
+            if on_complete is not None:
+                self.call_from_thread(on_complete)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_run_event(self, event: RunEvent) -> None:
+        if event.kind == "stage_started":
+            self._ui_state = begin_stage(
+                self._ui_state,
+                event.stage,
+                event.runner,
+                event.model,
+                event.effort,
+            )
+        elif event.kind == "stage_completed":
+            self._ui_state = complete_stage_attempt(
+                self._ui_state,
+                event.stage,
+                "done",
+                summary=event.summary,
+            )
+        elif event.kind == "output":
+            self._ui_state = append_run_output(self._ui_state, event.output_text)
+        elif event.kind == "run_finished":
+            self._ui_state = finish_run(self._ui_state, event.status, event.run_id)
+
+        try:
+            screen = self.screen
+        except Exception:
+            return
+        if isinstance(screen, RunScreen):
+            if event.kind == "stage_started":
+                screen._state = self._ui_state
+                screen.on_stage_started(event.stage, event.runner, event.model, event.effort)
+            elif event.kind == "stage_completed":
+                screen._state = self._ui_state
+                screen.on_stage_completed(event.stage, event.summary)
+            elif event.kind == "output":
+                screen._state = self._ui_state
+                screen.on_output(event.output_text)
+            elif event.kind == "run_finished":
+                screen._state = self._ui_state
+                screen.on_run_finished(event.status, event.run_id)
+
+    def on_config_screen_run_requested(self, event: ConfigScreen.RunRequested) -> None:
+        config = self.build_run_config()
+        stages = self._selected_run_stages()
+        self._ui_state = start_run(
+            self._ui_state,
+            run_id="pending",
+            stages=stages,
+            runner=config.runner,
+            model=config.model or "auto",
+            effort=config.effort or "auto",
+        )
+        screen = RunScreen(self._ui_state)
+        self.push_screen(screen)
+        self._launch_run_session(config)

@@ -245,6 +245,17 @@ class TestRunActions:
         assert len(dev_attempts) == 2
         assert dev_attempts[1].attempt_number == 2
 
+    def test_begin_stage_ignores_duplicate_start_for_active_attempt(self):
+        state = _loaded_state()
+        state = start_run(state, "run-123", ["architect", "developer"], "codex", "gpt-5", "medium")
+        state = begin_stage(state, "architect", "codex", "gpt-5", "medium")
+
+        state = begin_stage(state, "architect", "codex", "gpt-5", "medium")
+
+        architect_attempts = [a for a in state.run_view.timeline if a.stage == "architect"]
+        assert len(architect_attempts) == 1
+        assert architect_attempts[0].status == "active"
+
     def test_append_run_output(self):
         state = _loaded_state()
         state = start_run(state, "run-123", ["architect"], "codex", "gpt-5", "medium")

@@ -59,30 +59,35 @@ class RunStatusBar(Widget):
         background: $primary-darken-3;
         color: $text;
     }
+    RunStatusBar.-alert {
+        background: $error;
+        color: $text;
+    }
     """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._stage = ""
         self._status = ""
-        self._runner = ""
         self._model = ""
+        self._effort = ""
         self._elapsed = ""
+        self._alert_message = ""
+        self._alert_active = False
 
     def render(self) -> Text:
+        if self._alert_active:
+            return Text(f" {self._alert_message}", style="bold")
+
         text = Text()
         text.append(" Esc — back", style="dim")
         text.append("  ")
-        center = self._stage
-        if self._status:
-            center += f" · {self._status}"
-        text.append(center)
+        text.append(self._status or "idle")
         text.append("  ")
         right_parts = []
-        if self._runner:
-            right_parts.append(f"runner {self._runner}")
         if self._model:
             right_parts.append(f"model {self._model}")
+        if self._effort:
+            right_parts.append(f"effort {self._effort}")
         if self._elapsed:
             right_parts.append(self._elapsed)
         text.append("  ".join(right_parts), style="dim")
@@ -90,15 +95,25 @@ class RunStatusBar(Widget):
 
     def update_run_state(
         self,
-        stage: str = "",
         status: str = "",
         elapsed: str = "",
-        runner: str = "",
         model: str = "",
+        effort: str = "",
     ) -> None:
-        self._stage = stage
         self._status = status
         self._elapsed = elapsed
-        self._runner = runner
         self._model = model
+        self._effort = effort
+        self.refresh()
+
+    def show_alert(self, message: str) -> None:
+        self._alert_message = message
+        self._alert_active = True
+        self.add_class("-alert")
+        self.refresh()
+
+    def clear_alert(self) -> None:
+        self._alert_message = ""
+        self._alert_active = False
+        self.remove_class("-alert")
         self.refresh()

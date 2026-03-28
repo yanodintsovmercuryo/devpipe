@@ -234,3 +234,46 @@ def test_full_pipeline_ignores_kubernetes_adapter_for_qa_stand(tmp_path: Path, m
     )
 
     assert result.status == "completed"
+
+
+def test_full_pipeline_cancel_stops_without_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("devpipe.history.save_run", lambda _config: None)
+
+    class CancelOnFirstRun:
+        def __init__(self, app: OrchestratorApp) -> None:
+            self.app = app
+            self.calls: list[str] = []
+
+        def run(self, envelope):
+            self.calls.append(envelope.role)
+            self.app.cancel_active_runs()
+            raise RuntimeError("cancelled by operator")
+
+    app = OrchestratorApp(
+        roles=_roles(),
+        runners={},
+        runs_dir=tmp_path / "runs",
+        jira_adapter=None,
+        git_adapter=None,
+        github_adapter=None,
+        kubernetes_adapter=None,
+        runner_profiles=_runner_profiles(),
+    )
+    runner = CancelOnFirstRun(app)
+    app.runners["codex"] = runner
+
+    result = app.run(
+        RunConfig(
+            task_id="MRC-99",
+            task="Cancel pipeline",
+            runner="codex",
+            target_branch="release1-4",
+            namespace="ns",
+            service="acquiring",
+            extra_params={"stand": "u1", "dataset": "s4-3ds"},
+        )
+    )
+
+    assert result.status == "cancelled"
+    assert result.current_stage == "architect"
+    assert runner.calls == ["architect"]

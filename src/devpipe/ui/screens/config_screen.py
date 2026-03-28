@@ -246,8 +246,7 @@ class ConfigScreen(Screen):
     def action_run_pipeline(self) -> None:
         if not self._state.form.is_ready:
             return
-        from devpipe.ui.screens.run_screen import RunScreen
-        self.app.push_screen(RunScreen(self._state))
+        self.app.post_message(self.RunRequested())
 
     # ── Messages ──────────────────────────────────────────────────────────
 
@@ -259,6 +258,10 @@ class ConfigScreen(Screen):
 
     class DerivedInputsChanged(Message):
         """Request app to recalculate fields derived from tags and stage range."""
+        pass
+
+    class RunRequested(Message):
+        """Request app to initialize and start the pipeline run."""
         pass
 
     def on_detail_panel_action_requested(self, event: DetailPanel.ActionRequested) -> None:

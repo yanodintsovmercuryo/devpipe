@@ -95,11 +95,33 @@ def test_history_list_hides_date_and_truncates_multiline_title() -> None:
     assert "Second line should be hidden" not in rendered
 
 
+def test_history_list_truncates_to_single_line_with_ellipsis() -> None:
+    hist_list = HistoryList()
+    hist_list.set_entries(
+        [{"task": "Очень длинное название задачи которое обязательно должно быть обрезано в списке истории"}]
+    )
+
+    rendered_lines = hist_list.render().plain.splitlines()
+
+    assert rendered_lines[2].endswith("…")
+    assert "\n" not in rendered_lines[2]
+
+
+def test_history_list_removes_large_left_indent() -> None:
+    hist_list = HistoryList()
+    hist_list.set_entries([{"task": "Build feature X"}])
+
+    rendered_lines = hist_list.render().plain.splitlines()
+
+    assert rendered_lines[2] == "» Build feature X"
+
+
 def test_history_preview_matches_form_snapshot_layout() -> None:
     preview = HistoryPreview()
     preview.show_entry(
         {
             "date": "2026-03-27 12:00:00",
+            "finished_at": "2026-03-27 12:04:00",
             "task": "Build feature X",
             "task_id": "MRC-456",
             "runner": "codex",
@@ -117,7 +139,6 @@ def test_history_preview_matches_form_snapshot_layout() -> None:
 
     rendered = preview.render().plain
 
-    assert "2026-03-27" not in rendered
     assert "Task: Build feature X" in rendered
     assert "Runner: codex" in rendered
     assert "Model: high" in rendered
@@ -130,3 +151,5 @@ def test_history_preview_matches_form_snapshot_layout() -> None:
     assert "Service: acquiring" in rendered
     assert "Namespace: prod" in rendered
     assert "Dataset: full" in rendered
+    assert "Started: 2026-03-27 12:00:00" in rendered
+    assert "Finished: 2026-03-27 12:04:00" in rendered

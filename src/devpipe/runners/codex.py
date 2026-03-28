@@ -133,6 +133,7 @@ class CodexRunner(BaseCliRunner):
 
             exit_code = item.get("exit_code")
             is_printf = cmd.lstrip().startswith("printf ")
+            is_boring = cls._is_boring_cmd(cmd)
 
             if exit_code is not None and exit_code != 0:
                 cmd_short = cmd[:80] + ("…" if len(cmd) > 80 else "")
@@ -141,6 +142,8 @@ class CodexRunner(BaseCliRunner):
                 header = f"\x1b[2m⟫ {cmd}\x1b[0m"
 
             output = item.get("aggregated_output", "").rstrip("\n")
+            if is_boring and exit_code in (None, 0) and not is_printf:
+                return None
             if not output:
                 return header
 
@@ -165,7 +168,7 @@ class CodexRunner(BaseCliRunner):
             return result
 
         if etype == "turn.completed":
-            return "\x1b[2m────────────────────\x1b[0m"
+            return None
 
         return None  # skip other events
 
@@ -312,6 +315,7 @@ class CodexRunner(BaseCliRunner):
                 output_callback=self.output_callback,
                 forward_to_tty=self.forward_to_tty,
                 stdin_callback=self.stdin_callback,
+                process_callback=self._set_active_process,
             )
         except subprocess.TimeoutExpired as exc:
             from devpipe.runners.base import RunnerTimeoutError

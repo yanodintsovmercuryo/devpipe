@@ -103,6 +103,8 @@ class DetailPanel(Widget):
         lines: list[str] = [f"[bold cyan]╸ {item.label}[/bold cyan]\n"]
 
         if item.is_action:
+            lines.extend(build_task_snapshot_lines(form.values, custom_fields_from_form(form.fields)))
+            lines.append("")
             if item.key == "run":
                 missing = form.missing_required()
                 if missing:

@@ -41,14 +41,15 @@ class HistoryList(Widget, can_focus=True):
     def render(self) -> Text:
         text = Text()
         text.append("╸ History\n\n", style="bold dim")
+        available_width = max(12, (self.size.width or 28) - 2)
         for i, entry in enumerate(self._entries):
-            task = compact_history_title(entry.get("task", "") or "")
+            task = compact_history_title(entry.get("task", "") or "", max_len=available_width)
             if i == self._selected:
-                text.append(f"  » {task}\n", style="bold cyan")
+                text.append(f"» {task}\n", style="bold cyan")
             else:
-                text.append(f"    {task}\n", style="dim")
+                text.append(f"{task}\n", style="dim")
         if not self._entries:
-            text.append("  No history entries\n", style="dim")
+            text.append("No history entries\n", style="dim")
         return text
 
     def set_entries(self, entries: list[dict]) -> None:

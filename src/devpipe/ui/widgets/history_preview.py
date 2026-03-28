@@ -12,6 +12,7 @@ from devpipe.ui.widgets.task_snapshot import (
     build_task_snapshot_lines,
     compact_history_title,
     custom_fields_from_history_entry,
+    format_snapshot_value,
 )
 
 
@@ -54,6 +55,9 @@ class HistoryPreview(Widget):
 
         lines = [f"[bold cyan]╸ {compact_history_title(entry.get('task', ''))}[/bold cyan]\n"]
         lines.extend(build_task_snapshot_lines(snapshot_values, custom_fields_from_history_entry(entry)))
+        lines.append("\n[dim]── Run ──[/dim]")
+        lines.append(f"   Started: {format_snapshot_value(entry.get('date', ''))}")
+        lines.append(f"   Finished: {format_snapshot_value(entry.get('finished_at', ''))}")
 
         self._markup = "\n".join(lines)
         self.refresh()

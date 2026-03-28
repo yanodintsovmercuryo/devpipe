@@ -67,3 +67,34 @@ def test_codex_runner_rejects_invalid_output() -> None:
 
     with pytest.raises(InvalidRunnerOutputError):
         runner.run(_envelope())
+
+
+def test_codex_runner_hides_boring_successful_command_output() -> None:
+    event = {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution",
+            "command": "cat /tmp/noise.txt",
+            "exit_code": 0,
+            "aggregated_output": "line1\nline2\nline3",
+        },
+    }
+
+    formatted = CodexRunner._format_event(event)
+
+    assert formatted is None
+
+
+def test_codex_runner_run_pty_registers_process_callback(monkeypatch) -> None:
+    runner = CodexRunner()
+    seen: dict[str, object] = {}
+
+    def fake_run_with_pty(*_args, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(args=["codex"], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("devpipe.runners.base._run_with_pty", fake_run_with_pty)
+
+    runner._run_pty(_envelope())
+
+    assert seen["process_callback"] == runner._set_active_process

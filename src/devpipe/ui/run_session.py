@@ -5,12 +5,16 @@ suitable for the Textual message loop.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from devpipe.app import OrchestratorApp, RunConfig
 from devpipe.runtime.state import PipelineState
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;:<>?=]*[ -/]*[@-~]")
+_BLANK_RUN_RE = re.compile(r"\n{3,}")
 
 
 @dataclass
@@ -29,11 +33,23 @@ class RunEvent:
     structured_output: dict[str, Any] | None = None
 
 
+def sanitize_output_text(text: str) -> str:
+    """Convert runner output into clean plain text for the Textual log."""
+    plain = _ANSI_RE.sub("", text).replace("\r\n", "\n").replace("\r", "\n")
+    plain = _BLANK_RUN_RE.sub("\n\n", plain)
+    return plain.strip("\n")
+
+
 class RunSession:
     """Wraps OrchestratorApp.run() and emits normalized RunEvents."""
 
     def __init__(self, app: OrchestratorApp) -> None:
         self._app = app
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+        self._app.cancel_active_runs()
 
     def execute(
         self,
@@ -61,7 +77,11 @@ class RunSession:
 
         # Wire output callback to runners
         def on_output(text: str) -> None:
-            on_event(RunEvent(kind="output", output_text=text))
+            if self._cancelled:
+                return
+            cleaned = sanitize_output_text(text)
+            if cleaned:
+                on_event(RunEvent(kind="output", output_text=cleaned))
 
         for runner in self._app.runners.values():
             if hasattr(runner, "output_callback"):

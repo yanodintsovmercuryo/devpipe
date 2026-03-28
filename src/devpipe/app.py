@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+import threading
 
 from devpipe.roles.envelope import build_envelope
 from devpipe.roles.loader import RoleDefinition, load_roles
@@ -63,6 +64,7 @@ class OrchestratorApp:
         self.engine = PipelineEngine(retry_policy=retry_policy)
         self.project_root = Path(project_root) if project_root is not None else None
         self.runner_profiles = runner_profiles or {}
+        self._cancel_requested = threading.Event()
 
     def run(
         self,
@@ -70,8 +72,9 @@ class OrchestratorApp:
         on_stage_start: "Callable[[str, str, str, str], None] | None" = None,
         on_stage_complete: "Callable[[str, dict], None] | None" = None,
     ) -> PipelineState:
-        from devpipe.history import save_run
+        from devpipe.history import finish_run, save_run
         save_run(config)
+        self._cancel_requested.clear()
 
         first_role = config.first_role or STAGE_ORDER[0]
         last_role = config.last_role or STAGE_ORDER[-1]
@@ -98,82 +101,104 @@ class OrchestratorApp:
         state = self.engine.apply(state, event)
         state.current_stage = first_role
 
-        while state.status not in {"completed", "failed"}:
-            role = self.roles[state.current_stage]
-            actual_runner_name = role.runner if config.runner == "auto" else config.runner
-            runner = self.runners[actual_runner_name]
-            state.selected_runner = actual_runner_name
-            model_level = role.model if config.model in {None, "", "auto"} else config.model
-            effort_level = role.effort if config.effort in {None, "", "auto"} else config.effort
-            resolved_model = resolve_model(self.runner_profiles, actual_runner_name, model_level)
-            resolved_effort = resolve_effort(self.runner_profiles, actual_runner_name, effort_level)
-            runner.model_name = resolved_model
-            runner.effort = resolved_effort
-            stage_context: dict[str, object] = {"config": config.__dict__}
-            if state.current_stage == "release":
-                if not config.target_branch:
-                    raise ValueError("target_branch must be provided for release stage")
-                if not config.namespace:
-                    raise ValueError("namespace must be provided for release stage")
-                if not config.service:
-                    raise ValueError("service must be provided for release stage")
-                current_branch = getattr(self.git_adapter, "current_branch", lambda: None)() if self.git_adapter is not None else None
-                stage_context["release_inputs"] = {
-                    "branch": current_branch,
-                    "target_branch": config.target_branch,
-                    "namespace": config.namespace,
-                    "service": config.service,
-                    **(config.extra_params or {}),
-                }
+        try:
+            while state.status not in {"completed", "failed", "cancelled"}:
+                if self._cancel_requested.is_set():
+                    state.status = "cancelled"
+                    break
+                role = self.roles[state.current_stage]
+                actual_runner_name = role.runner if config.runner == "auto" else config.runner
+                runner = self.runners[actual_runner_name]
+                state.selected_runner = actual_runner_name
+                model_level = role.model if config.model in {None, "", "auto"} else config.model
+                effort_level = role.effort if config.effort in {None, "", "auto"} else config.effort
+                resolved_model = resolve_model(self.runner_profiles, actual_runner_name, model_level)
+                resolved_effort = resolve_effort(self.runner_profiles, actual_runner_name, effort_level)
+                runner.model_name = resolved_model
+                runner.effort = resolved_effort
+                stage_context: dict[str, object] = {"config": config.__dict__}
+                if state.current_stage == "release":
+                    if not config.target_branch:
+                        raise ValueError("target_branch must be provided for release stage")
+                    if not config.namespace:
+                        raise ValueError("namespace must be provided for release stage")
+                    if not config.service:
+                        raise ValueError("service must be provided for release stage")
+                    current_branch = getattr(self.git_adapter, "current_branch", lambda: None)() if self.git_adapter is not None else None
+                    stage_context["release_inputs"] = {
+                        "branch": current_branch,
+                        "target_branch": config.target_branch,
+                        "namespace": config.namespace,
+                        "service": config.service,
+                        **(config.extra_params or {}),
+                    }
 
-            envelope = build_envelope(
-                role,
-                state,
-                model_name=resolved_model,
-                effort=resolved_effort,
-                extra_context=stage_context,
-                project_root=self.project_root,
-                tags=config.tags,
-            )
-            if on_stage_start is not None:
-                on_stage_start(state.current_stage, actual_runner_name, resolved_model, resolved_effort)
-            try:
-                result = runner.run(envelope)
-            except Exception as exc:
-                failure = Event(EventType.STAGE_FAILED, stage=state.current_stage, error_message=str(exc))
-                logger.log_event(failure)
-                state = self.engine.apply(state, failure)
+                envelope = build_envelope(
+                    role,
+                    state,
+                    model_name=resolved_model,
+                    effort=resolved_effort,
+                    extra_context=stage_context,
+                    project_root=self.project_root,
+                    tags=config.tags,
+                )
+                if on_stage_start is not None:
+                    on_stage_start(state.current_stage, actual_runner_name, resolved_model, resolved_effort)
+                try:
+                    result = runner.run(envelope)
+                except Exception as exc:
+                    if self._cancel_requested.is_set():
+                        state.status = "cancelled"
+                        logger.write_summary(state)
+                        break
+                    failure = Event(EventType.STAGE_FAILED, stage=state.current_stage, error_message=str(exc))
+                    logger.log_event(failure)
+                    state = self.engine.apply(state, failure)
+                    logger.write_summary(state)
+                    if state.status == "failed":
+                        raise
+                    continue
+
+                if self._cancel_requested.is_set():
+                    state.status = "cancelled"
+                    logger.write_summary(state)
+                    break
+
+                state.artifacts.setdefault("stage_outputs", {})[role.name] = result.structured_output
+                transcript_path = logger.log_stage_transcript(role.name, result.transcript)
+                artifacts.write_stage_artifacts(role.name, result.structured_output)
+                state.shared_context[f"{role.name}_log"] = str(transcript_path)
+
+                if on_stage_complete is not None:
+                    on_stage_complete(role.name, result.structured_output)
+
+                success = Event(EventType.STAGE_COMPLETED, stage=role.name, summary=result.summary)
+                logger.log_event(success)
+                state = self.engine.apply(state, success)
                 logger.write_summary(state)
-                if state.status == "failed":
-                    raise
-                continue
 
-            state.artifacts.setdefault("stage_outputs", {})[role.name] = result.structured_output
-            transcript_path = logger.log_stage_transcript(role.name, result.transcript)
-            artifacts.write_stage_artifacts(role.name, result.structured_output)
-            state.shared_context[f"{role.name}_log"] = str(transcript_path)
+                if role.name == last_role and state.status not in {"completed", "failed"}:
+                    state.status = "completed"
+                    state.current_stage = "completed"
+                    logger.write_summary(state)
 
-            if on_stage_complete is not None:
-                on_stage_complete(role.name, result.structured_output)
-
-            success = Event(EventType.STAGE_COMPLETED, stage=role.name, summary=result.summary)
-            logger.log_event(success)
-            state = self.engine.apply(state, success)
+                if role.name == "release" and self.github_adapter is not None:
+                    self.github_adapter.ensure_workflow_success(state.run_id)
+        finally:
             logger.write_summary(state)
+            finish_run(config)
 
-            if role.name == last_role and state.status not in {"completed", "failed"}:
-                state.status = "completed"
-                state.current_stage = "completed"
-                logger.write_summary(state)
-
-            if role.name == "release" and self.github_adapter is not None:
-                self.github_adapter.ensure_workflow_success(state.run_id)
-
-        logger.write_summary(state)
         return state
 
     def inspect_roles(self) -> list[str]:
         return sorted(self.roles)
+
+    def cancel_active_runs(self) -> None:
+        self._cancel_requested.set()
+        for runner in self.runners.values():
+            cancel = getattr(runner, "cancel", None)
+            if callable(cancel):
+                cancel()
 
 
 def build_default_app(base_dir: str | Path) -> OrchestratorApp:

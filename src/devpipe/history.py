@@ -46,6 +46,27 @@ def save_run(config: RunConfig) -> None:
     )
 
 
+def finish_run(config: RunConfig) -> None:
+    if not HISTORY_PATH.exists():
+        return
+
+    entries = yaml.safe_load(HISTORY_PATH.read_text(encoding="utf-8")) or []
+    for entry in entries:
+        if entry.get("finished_at"):
+            continue
+        if entry.get("task", "") != (config.task or ""):
+            continue
+        if entry.get("task_id", "") != (config.task_id or ""):
+            continue
+        entry["finished_at"] = _now_iso()
+        break
+
+    HISTORY_PATH.write_text(
+        yaml.dump(entries[:MAX_ENTRIES], allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
 def load_history() -> list[dict]:
     if not HISTORY_PATH.exists():
         return []

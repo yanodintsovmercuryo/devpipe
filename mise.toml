@@ -12,6 +12,10 @@ run = "rm -rf .venv && python -m venv .venv && .venv/bin/pip install -e '.[dev]'
 description = "Run test suite"
 run = ".venv/bin/pytest"
 
+[tasks.test-live-runners]
+description = "Run test suite including live codex/claude CLI checks"
+run = ".venv/bin/pytest --run-live-runners"
+
 [tasks.roles]
 description = "List available roles"
 run = ".venv/bin/python -m devpipe inspect --roles-dir roles"

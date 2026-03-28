@@ -106,6 +106,19 @@ def test_text_editor_mode_shows_field_details() -> None:
     assert "Task text passed to the pipeline\n\n\nEnter" in rendered
 
 
+def test_action_summary_keeps_current_task_context() -> None:
+    panel = DetailPanel()
+    item = NavItem(key="history", label="History", section=NavSection.ACTIONS, is_action=True)
+
+    panel.show_summary(item, _form())
+
+    rendered = panel.render().plain
+    assert "Task: Ship feature" in rendered
+    assert "Runner: codex" in rendered
+    assert "Model: auto" in rendered
+    assert "Press Enter to open history" in rendered
+
+
 def test_begin_edit_model_uses_single_choice_editor() -> None:
     panel = DetailPanel()
     form = _form()

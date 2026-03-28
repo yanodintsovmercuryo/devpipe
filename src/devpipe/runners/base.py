@@ -3,9 +3,11 @@ from __future__ import annotations
 import os
 import pty
 import select
+import signal
 import subprocess
 import sys
 import termios
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
@@ -38,6 +40,18 @@ class Runner(Protocol):
         ...
 
 
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
 def _run_with_pty(
     command: list[str],
     input: str,
@@ -46,6 +60,7 @@ def _run_with_pty(
     output_callback: "Callable[[str], None] | None" = None,
     forward_to_tty: bool = False,
     stdin_callback: "Callable[[bytes], None] | None" = None,
+    process_callback: "Callable[[subprocess.Popen[bytes], int], None] | None" = None,
 ) -> subprocess.CompletedProcess:
     """Run command with PTY for stdin+stdout so all TTY checks pass.
 
@@ -70,7 +85,10 @@ def _run_with_pty(
         stderr=subprocess.PIPE,
         close_fds=True,
         env=env,
+        start_new_session=True,
     )
+    if process_callback is not None:
+        process_callback(proc, master_fd)
     os.close(slave_fd)
 
     # Write input + EOF using bidirectional select to prevent TTY buffer
@@ -86,7 +104,7 @@ def _run_with_pty(
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            proc.kill()
+            _kill_process_group(proc)
             proc.communicate()
             try:
                 os.close(master_fd)
@@ -179,6 +197,26 @@ class BaseCliRunner:
     stdin_callback: "Callable[[bytes], None] | None" = None
     model_name: str | None = None
     effort: str | None = None
+    _active_process: subprocess.Popen | None = field(default=None, init=False, repr=False)
+    _active_master_fd: int | None = field(default=None, init=False, repr=False)
+    _process_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def _set_active_process(self, proc: subprocess.Popen | None, master_fd: int | None = None) -> None:
+        with self._process_lock:
+            self._active_process = proc
+            self._active_master_fd = master_fd
+
+    def cancel(self) -> None:
+        with self._process_lock:
+            proc = self._active_process
+            master_fd = self._active_master_fd
+        if proc is not None and proc.poll() is None:
+            _kill_process_group(proc)
+        if master_fd is not None:
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
 
     def build_prompt(self, envelope: TaskEnvelope) -> str:
         return (
@@ -212,18 +250,41 @@ class BaseCliRunner:
                     output_callback=self.output_callback,
                     forward_to_tty=self.forward_to_tty,
                     stdin_callback=self.stdin_callback,
+                    process_callback=self._set_active_process,
                 )
             else:
-                completed = self.exec_fn(
-                    command,
-                    input=prompt,
-                    text=True,
-                    capture_output=True,
-                    timeout=self.timeout,
-                    env=self.env or None,
-                )
+                if self.exec_fn is not subprocess.run:
+                    completed = self.exec_fn(
+                        command,
+                        input=prompt,
+                        capture_output=True,
+                        text=True,
+                        timeout=self.timeout,
+                        env=self.env or None,
+                    )
+                else:
+                    proc = subprocess.Popen(
+                        command,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=self.env or None,
+                        start_new_session=True,
+                    )
+                    self._set_active_process(proc)
+                    stdout, stderr = proc.communicate(prompt, timeout=self.timeout)
+                    completed = subprocess.CompletedProcess(
+                        args=command,
+                        returncode=proc.returncode,
+                        stdout=stdout,
+                        stderr=stderr,
+                    )
         except subprocess.TimeoutExpired as exc:
+            self.cancel()
             raise RunnerTimeoutError(str(exc)) from exc
+        finally:
+            self._set_active_process(None)
 
         if completed.returncode != 0:
             raise CommandFailedError(completed.stderr or f"Runner exited with code {completed.returncode}")

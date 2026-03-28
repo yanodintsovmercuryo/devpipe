@@ -253,6 +253,10 @@ def begin_stage(state: UIState, stage: str, runner: str, model: str, effort: str
     new.run_view.model_name = model
     new.run_view.effort = effort
 
+    for attempt in new.run_view.timeline:
+        if attempt.stage == stage and attempt.status == "active":
+            return new
+
     # Find the pending attempt for this stage and activate it
     for attempt in new.run_view.timeline:
         if attempt.stage == stage and attempt.status == "pending":
