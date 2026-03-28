@@ -10,6 +10,11 @@ from textual.widget import Widget
 from textual.widgets import Input, Static
 
 from devpipe.ui.state import FieldKind, FieldMeta, FormState, NavItem, NavSection
+from devpipe.ui.widgets.task_snapshot import (
+    build_task_snapshot_lines,
+    custom_fields_from_form,
+    format_snapshot_value,
+)
 
 
 class DetailPanel(Widget):
@@ -114,50 +119,16 @@ class DetailPanel(Widget):
         value = form.values.get(item.key, "")
         field_meta = form.field_by_key(item.key)
 
-        self._add_standard_summary(lines, form, item.key)
+        lines.extend(build_task_snapshot_lines(form.values, custom_fields_from_form(form.fields), item.key))
         self._add_field_detail(lines, item.key, value, field_meta, form)
 
         lines.append("\n[dim]Enter — edit  ·  Esc — back[/dim]")
         self._summary_text = "\n".join(lines)
         self.refresh()
 
-    def _add_standard_summary(self, lines: list[str], form: FormState, highlight_key: str) -> None:
-        """Add summary of standard fields to lines."""
-        standard = [
-            ("profile", "Profile"),
-            ("task", "Task"),
-            ("runner", "Runner"),
-            ("model", "Model"),
-            ("effort", "Effort"),
-            ("tags", "Tags"),
-            ("first_role", "Start Stage"),
-            ("last_role", "Finish Stage"),
-        ]
-        for key, label in standard:
-            val = form.values.get(key, "")
-            display_val = str(val) if val else "[dim](empty)[/dim]"
-            if key == highlight_key:
-                lines.append(f" [bold]▸ {label}:[/bold] {display_val}")
-            else:
-                lines.append(f"   {label}: {display_val}")
-
-        # Custom fields summary
-        has_custom = False
-        for f in form.fields:
-            if f.section == "custom":
-                if not has_custom:
-                    lines.append("\n[dim]── Custom ──[/dim]")
-                    has_custom = True
-                val = form.values.get(f.key, "")
-                display_val = self._format_value(val)
-                if f.key == highlight_key:
-                    lines.append(f" [bold]▸ {f.label}:[/bold] {display_val}")
-                else:
-                    lines.append(f"   {f.label}: {display_val}")
-
     def _add_field_detail(self, lines: list[str], key: str, value: Any, field_meta: FieldMeta | None, form: FormState) -> None:
         """Add detail view for a custom field."""
-        display_val = self._format_value(value)
+        display_val = format_snapshot_value(value)
         lines.append("")
         lines.append(f"  Current: {display_val}")
 
@@ -202,19 +173,6 @@ class DetailPanel(Widget):
         if key == "last_role" and first in stages:
             return stages[stages.index(first):]
         return stages
-
-    @staticmethod
-    def _format_value(value: Any) -> str:
-        if value is None or value == "":
-            return "[dim](empty)[/dim]"
-        if isinstance(value, list):
-            return ", ".join(str(v) for v in value) if value else "[dim](empty)[/dim]"
-        if isinstance(value, dict):
-            if not value:
-                return "[dim](empty)[/dim]"
-            parts = [f"{k}={v}" for k, v in value.items()]
-            return ", ".join(parts)
-        return str(value)
 
     def begin_edit(self, item: NavItem, form: FormState) -> None:
         """Switch to inline-edit mode for the current field."""
@@ -313,7 +271,7 @@ class DetailPanel(Widget):
         lines = [f"[bold cyan]╸ Editing: {self._current_item.label if self._current_item else key}[/bold cyan]"]
         lines.append("")
         lines.append("")
-        lines.append(f"  Current: {self._format_value(value)}")
+        lines.append(f"  Current: {format_snapshot_value(value)}")
         if description:
             lines.append(f"\n  [dim]{description}[/dim]")
             lines.append("")
@@ -324,7 +282,7 @@ class DetailPanel(Widget):
             return
         top_lines = [f"[bold cyan]╸ Editing: {self._current_item.label if self._current_item else key}[/bold cyan]"]
         top_lines.append("")
-        top_lines.append(f"  Current: {self._format_value(value)}")
+        top_lines.append(f"  Current: {format_snapshot_value(value)}")
         if description:
             top_lines.append(f"\n  [dim]{description}[/dim]")
         self._mount_inline_input(
@@ -374,7 +332,7 @@ class DetailPanel(Widget):
         if field_meta is not None:
             description = field_meta.description or description
         current_value = self._editor_committed_value if self._editor_mode else ""
-        lines.append(f"  Current: {self._format_value(current_value)}")
+        lines.append(f"  Current: {format_snapshot_value(current_value)}")
         if description:
             lines.append(f"\n  [dim]{description}[/dim]")
         lines.append("")

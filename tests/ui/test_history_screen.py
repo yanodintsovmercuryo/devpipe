@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import pytest
 
+from devpipe.ui.screens.history_screen import HistoryList
 from devpipe.ui.actions import apply_history_entry, load_defaults
 from devpipe.ui.state import FieldKind, FieldMeta, UIState
+from devpipe.ui.widgets.history_preview import HistoryPreview
 
 
 def _make_state() -> UIState:
@@ -73,3 +75,58 @@ class TestHistoryRestore:
         new = apply_history_entry(state, entry)
         assert new.form.values["first_role"] == "developer"
         assert new.form.values["last_role"] == "qa_local"
+
+
+def test_history_list_hides_date_and_truncates_multiline_title() -> None:
+    hist_list = HistoryList()
+    hist_list.set_entries(
+        [
+            {
+                "date": "2026-03-27 12:00:00",
+                "task": "First line of task\nSecond line should be hidden because title must stay single-line",
+            }
+        ]
+    )
+
+    rendered = hist_list.render().plain
+
+    assert "2026-03-27" not in rendered
+    assert "First line of task" in rendered
+    assert "Second line should be hidden" not in rendered
+
+
+def test_history_preview_matches_form_snapshot_layout() -> None:
+    preview = HistoryPreview()
+    preview.show_entry(
+        {
+            "date": "2026-03-27 12:00:00",
+            "task": "Build feature X",
+            "task_id": "MRC-456",
+            "runner": "codex",
+            "model": "high",
+            "effort": "extra",
+            "target_branch": "main",
+            "service": "acquiring",
+            "namespace": "prod",
+            "tags": ["go"],
+            "extra_params": {"dataset": ["full"]},
+            "first_role": "architect",
+            "last_role": "qa_local",
+        }
+    )
+
+    rendered = preview.render().plain
+
+    assert "2026-03-27" not in rendered
+    assert "Task: Build feature X" in rendered
+    assert "Runner: codex" in rendered
+    assert "Model: high" in rendered
+    assert "Effort: extra" in rendered
+    assert "Tags: go" in rendered
+    assert "Start Stage: architect" in rendered
+    assert "Finish Stage: qa_local" in rendered
+    assert "Task Id: MRC-456" in rendered
+    assert "Target Branch: main" in rendered
+    assert "Service: acquiring" in rendered
+    assert "Namespace: prod" in rendered
+    assert "Dataset: full" in rendered

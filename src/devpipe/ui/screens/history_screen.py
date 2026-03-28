@@ -16,6 +16,7 @@ from textual.widget import Widget
 from devpipe.history import load_history
 from devpipe.ui.state import UIState
 from devpipe.ui.widgets.history_preview import HistoryPreview
+from devpipe.ui.widgets.task_snapshot import compact_history_title
 
 
 class HistoryList(Widget, can_focus=True):
@@ -41,12 +42,11 @@ class HistoryList(Widget, can_focus=True):
         text = Text()
         text.append("╸ History\n\n", style="bold dim")
         for i, entry in enumerate(self._entries):
-            date = entry.get("date", "")
-            task = (entry.get("task", "") or "")[:40]
+            task = compact_history_title(entry.get("task", "") or "")
             if i == self._selected:
-                text.append(f"  » {date}  {task}\n", style="bold cyan")
+                text.append(f"  » {task}\n", style="bold cyan")
             else:
-                text.append(f"    {date}  {task}\n", style="dim")
+                text.append(f"    {task}\n", style="dim")
         if not self._entries:
             text.append("  No history entries\n", style="dim")
         return text

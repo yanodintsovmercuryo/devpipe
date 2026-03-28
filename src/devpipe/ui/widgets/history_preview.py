@@ -8,6 +8,12 @@ from rich.text import Text
 
 from textual.widget import Widget
 
+from devpipe.ui.widgets.task_snapshot import (
+    build_task_snapshot_lines,
+    compact_history_title,
+    custom_fields_from_history_entry,
+)
+
 
 class HistoryPreview(Widget):
     """Preview panel for a history entry."""
@@ -29,33 +35,25 @@ class HistoryPreview(Widget):
 
     def show_entry(self, entry: dict) -> None:
         """Render a history entry preview."""
-        date = entry.get("date", "")
-        task = entry.get("task", "(empty)")
-
-        lines = [f"[bold cyan]╸ {date}[/bold cyan]\n"]
-
-        rows = [
-            ("task", task),
-            ("task-id", entry.get("task_id", "—")),
-            ("runner", entry.get("runner", "")),
-            ("target-branch", entry.get("target_branch", "") or "none"),
-            ("service", entry.get("service", "")),
-            ("namespace", entry.get("namespace", "") or "auto"),
-            ("tags", ", ".join(entry.get("tags", [])) or "none"),
-        ]
-
+        snapshot_values = {
+            "task": entry.get("task", ""),
+            "runner": entry.get("runner", ""),
+            "model": entry.get("model", ""),
+            "effort": entry.get("effort", ""),
+            "tags": entry.get("tags", []),
+            "first_role": entry.get("first_role", ""),
+            "last_role": entry.get("last_role", ""),
+            "task_id": entry.get("task_id", ""),
+            "target_branch": entry.get("target_branch", ""),
+            "service": entry.get("service", ""),
+            "namespace": entry.get("namespace", ""),
+        }
         extra = entry.get("extra_params", {})
-        for k, v in extra.items():
-            display = ", ".join(v) if isinstance(v, list) else str(v)
-            rows.append((f"  {k}", display))
+        if isinstance(extra, dict):
+            snapshot_values.update(extra)
 
-        first = entry.get("first_role", "") or "architect"
-        last = entry.get("last_role", "") or "qa_stand"
-        rows.append(("roles", f"{first} → {last}"))
-
-        key_w = max(len(r[0]) for r in rows) + 2
-        for key, val in rows:
-            lines.append(f"  [dim]{key.ljust(key_w)}[/dim] {val}")
+        lines = [f"[bold cyan]╸ {compact_history_title(entry.get('task', ''))}[/bold cyan]\n"]
+        lines.extend(build_task_snapshot_lines(snapshot_values, custom_fields_from_history_entry(entry)))
 
         self._markup = "\n".join(lines)
         self.refresh()
