@@ -227,10 +227,10 @@ git commit -m "refactor(runtime): drive stage flow from routing rules"
 ### Task 3: Ввести декларативные `in`/`out` bindings и typed inputs
 
 **Files:**
-- Modify: `src/devpipe/roles/loader.py`
-- Modify: `src/devpipe/roles/envelope.py`
+- Modify: `src/devpipe/stages/loader.py`
+- Modify: `src/devpipe/stages/envelope.py`
 - Modify: `src/devpipe/app.py`
-- Create: `tests/roles/test_bindings.py`
+- Create: `tests/stages/test_bindings.py`
 
 - [ ] **Step 1: Write failing tests for stage bindings**
 
@@ -247,7 +247,7 @@ git commit -m "refactor(runtime): drive stage flow from routing rules"
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run:
-- `PYTHONPATH=src .venv/bin/pytest tests/roles/test_bindings.py -q`
+- `PYTHONPATH=src .venv/bin/pytest tests/stages/test_bindings.py -q`
 
 Expected:
 - FAIL из-за отсутствия typed input validation и stage-aware bindings
@@ -279,7 +279,7 @@ Expected:
 - [ ] **Step 6: Run tests to verify binding layer passes**
 
 Run:
-- `PYTHONPATH=src .venv/bin/pytest tests/roles/test_bindings.py tests/e2e/test_full_pipeline.py -q`
+- `PYTHONPATH=src .venv/bin/pytest tests/stages/test_bindings.py tests/e2e/test_full_pipeline.py -q`
 
 Expected:
 - PASS
@@ -287,7 +287,7 @@ Expected:
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/devpipe/roles/loader.py src/devpipe/roles/envelope.py src/devpipe/app.py tests/roles/test_bindings.py tests/e2e/test_full_pipeline.py
+git add src/devpipe/stages/loader.py src/devpipe/stages/envelope.py src/devpipe/app.py tests/stages/test_bindings.py tests/e2e/test_full_pipeline.py
 git commit -m "feat(pipeline): resolve stage inputs from declarative bindings"
 ```
 
@@ -439,7 +439,7 @@ Builtin profile должен описывать текущий flow через `
 - `release`
 - `qa_stand`
 
-Все prompts и schemas должны жить рядом с profile, а не в глобальном `roles/`.
+Все prompts и schemas должны жить рядом с profile, а не в глобальном `stages/` legacy-каталоге.
 
 - [ ] **Step 2: Add project example for acquiring**
 
@@ -466,7 +466,7 @@ README должен объяснить:
 - [ ] **Step 4: Run verification**
 
 Run:
-- `PYTHONPATH=src .venv/bin/pytest tests/profiles/test_stages.py tests/profiles/test_routing.py tests/profiles/test_loader.py tests/roles/test_bindings.py tests/test_history.py tests/test_cli.py tests/tui/test_profile_selection.py tests/e2e/test_full_pipeline.py -q`
+- `PYTHONPATH=src .venv/bin/pytest tests/profiles/test_stages.py tests/profiles/test_routing.py tests/profiles/test_loader.py tests/stages/test_bindings.py tests/test_history.py tests/test_cli.py tests/tui/test_profile_selection.py tests/e2e/test_full_pipeline.py -q`
 
 Expected:
 - PASS

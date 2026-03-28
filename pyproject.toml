@@ -12,7 +12,7 @@ dependencies = [
   "PyYAML>=6.0",
   "jsonschema>=4.0",
   "pocketflow>=0.0.3",
-  "questionary>=2.0",
+  "textual>=0.40.0",
   "rich>=13.0",
 ]
 

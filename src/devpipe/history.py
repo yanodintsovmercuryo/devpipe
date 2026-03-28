@@ -29,6 +29,8 @@ def save_run(config: RunConfig) -> None:
         "task": config.task or "",
         "task_id": config.task_id or "",
         "runner": config.runner or "codex",
+        "model": config.model or "auto",
+        "effort": config.effort or "auto",
         "target_branch": config.target_branch or "",
         "service": config.service or "",
         "namespace": config.namespace or "",

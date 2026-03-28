@@ -28,6 +28,8 @@ class RunConfig:
     task_id: str | None
     task: str
     runner: str
+    model: str | None = None
+    effort: str | None = None
     target_branch: str | None = None
     namespace: str | None = None
     service: str | None = None
@@ -101,8 +103,10 @@ class OrchestratorApp:
             actual_runner_name = role.runner if config.runner == "auto" else config.runner
             runner = self.runners[actual_runner_name]
             state.selected_runner = actual_runner_name
-            resolved_model = resolve_model(self.runner_profiles, actual_runner_name, role.model)
-            resolved_effort = resolve_effort(self.runner_profiles, actual_runner_name, role.effort)
+            model_level = role.model if config.model in {None, "", "auto"} else config.model
+            effort_level = role.effort if config.effort in {None, "", "auto"} else config.effort
+            resolved_model = resolve_model(self.runner_profiles, actual_runner_name, model_level)
+            resolved_effort = resolve_effort(self.runner_profiles, actual_runner_name, effort_level)
             runner.model_name = resolved_model
             runner.effort = resolved_effort
             stage_context: dict[str, object] = {"config": config.__dict__}

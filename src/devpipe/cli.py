@@ -458,29 +458,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command is None:
-        from devpipe.tui import run_tui
-        base_dir = Path(args.roles_dir).resolve().parents[0] if getattr(args, "roles_dir", None) else Path(__file__).resolve().parents[2]
+        from devpipe.ui.app import DevpipeTextualApp
 
-        _stdin_fd = sys.stdin.fileno() if sys.stdin.isatty() else None
-        _old_term = termios.tcgetattr(_stdin_fd) if _stdin_fd is not None else None
+        project_root = Path.cwd()
 
-        sys.stdout.write("\x1b[?1049h")  # enter alternate screen
-        sys.stdout.flush()
+        tui_app = DevpipeTextualApp(project_root=project_root)
+        tui_app.run()
 
-        try:
-            config = run_tui(base_dir)
-        except KeyboardInterrupt:
-            config = None
-        except Exception:
-            sys.stdout.write("\x1b[?1049l")
-            sys.stdout.flush()
-            raise
-
+        config = tui_app.result_config
         if config is None:
-            sys.stdout.write("\x1b[?1049l")  # exit alternate screen — back to normal terminal
-            sys.stdout.flush()
             return 0
 
+        base_dir = Path(args.roles_dir).resolve().parents[0] if getattr(args, "roles_dir", None) else Path(__file__).resolve().parents[2]
         app = build_default_app(base_dir)
 
         first = config.first_role or STAGE_ORDER[0]
@@ -489,14 +478,18 @@ def main(argv: list[str] | None = None) -> int:
         li = STAGE_ORDER.index(last) if last in STAGE_ORDER else len(STAGE_ORDER) - 1
         active_stages = STAGE_ORDER[fi: li + 1]
 
+        _stdin_fd = sys.stdin.fileno() if sys.stdin.isatty() else None
+        _old_term = termios.tcgetattr(_stdin_fd) if _stdin_fd is not None else None
+
         console = Console()
-        sys.stdout.write("\x1b[?25l")  # hide cursor
+
+        sys.stdout.write("\x1b[?1049h")  # enter alternate screen
+        sys.stdout.write("\x1b[?25l")   # hide cursor
         sys.stdout.flush()
 
-        # Disable echo + enable mouse wheel reporting
         if _stdin_fd is not None:
-            tty.setcbreak(_stdin_fd)  # cbreak: no echo, but Ctrl+C still sends SIGINT
-        sys.stdout.write("\x1b[?1000h\x1b[?1006h")  # enable mouse reporting (SGR mode)
+            tty.setcbreak(_stdin_fd)
+        sys.stdout.write("\x1b[?1000h\x1b[?1006h")
         sys.stdout.flush()
 
         ui_runner = app.runners["codex"] if config.runner == "auto" else app.runners[config.runner]
@@ -520,8 +513,8 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             if _stdin_fd is not None and _old_term is not None:
                 termios.tcsetattr(_stdin_fd, termios.TCSADRAIN, _old_term)
-            sys.stdout.write("\x1b[?1006l\x1b[?1000l")  # disable mouse
-            sys.stdout.write("\x1b[?1049l")  # exit alternate screen
+            sys.stdout.write("\x1b[?1006l\x1b[?1000l")
+            sys.stdout.write("\x1b[?1049l")
             sys.stdout.write("\x1b[?25h\n")
             sys.stdout.flush()
             console.print("[dim]interrupted[/dim]")
@@ -529,7 +522,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             if _stdin_fd is not None and _old_term is not None:
                 termios.tcsetattr(_stdin_fd, termios.TCSADRAIN, _old_term)
-            sys.stdout.write("\x1b[?1006l\x1b[?1000l")  # disable mouse
+            sys.stdout.write("\x1b[?1006l\x1b[?1000l")
             sys.stdout.write("\x1b[?1049l")
             sys.stdout.write("\x1b[?25h\n")
             sys.stdout.flush()
@@ -537,7 +530,7 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             if _stdin_fd is not None and _old_term is not None:
                 termios.tcsetattr(_stdin_fd, termios.TCSADRAIN, _old_term)
-            sys.stdout.write("\x1b[?1006l\x1b[?1000l")  # disable mouse
+            sys.stdout.write("\x1b[?1006l\x1b[?1000l")
             sys.stdout.write("\x1b[?25h")
             sys.stdout.flush()
 
