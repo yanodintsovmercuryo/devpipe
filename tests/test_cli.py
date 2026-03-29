@@ -72,7 +72,7 @@ def test_run_progress_draw_writes_cursor_home_before_panel(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr("devpipe.cli.shutil.get_terminal_size", lambda: os.terminal_size((80, 24)))
+    monkeypatch.setattr("devpipe.cli.shutil.get_terminal_size", lambda *args, **kwargs: os.terminal_size((80, 24)))
     monkeypatch.setattr("devpipe.cli.time.monotonic", lambda: 100.0)
 
     progress = _RunProgress(
@@ -114,7 +114,7 @@ def test_run_progress_draw_wraps_long_log_lines_without_truncation(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr("devpipe.cli.shutil.get_terminal_size", lambda: os.terminal_size((40, 12)))
+    monkeypatch.setattr("devpipe.cli.shutil.get_terminal_size", lambda *args, **kwargs: os.terminal_size((40, 12)))
     monkeypatch.setattr("devpipe.cli.time.monotonic", lambda: 100.0)
 
     progress = _RunProgress(

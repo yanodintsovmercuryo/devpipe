@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from devpipe.profiles.routing import RoutingSpec
+
 
 STAGE_ORDER = ["architect", "developer", "test_developer", "qa_local", "release", "qa_stand"]
 
@@ -24,8 +26,25 @@ class PipelineState:
     release_context: dict[str, object] = field(default_factory=dict)
     last_error: str | None = None
 
+    # Profile-driven fields
+    routing: RoutingSpec | None = None
+    inputs: dict[str, object] = field(default_factory=dict)
+    runtime: dict[str, object] = field(default_factory=dict)
+    integration: dict[str, object] = field(default_factory=dict)
+    stage_attempts: list[dict[str, object]] = field(default_factory=list)
+    last_selected_rule: dict[str, object] | None = None
+    # Temporary storage for current stage inputs before execution
+    _current_stage_inputs: dict[str, object] | None = None
+
     @classmethod
-    def create(cls, task_id: str, task_text: str, selected_runner: str, run_id: str | None = None) -> "PipelineState":
+    def create(
+        cls,
+        task_id: str,
+        task_text: str,
+        selected_runner: str,
+        run_id: str | None = None,
+        routing: RoutingSpec | None = None,
+    ) -> "PipelineState":
         actual_run_id = run_id or f"{task_id.lower()}-{uuid4().hex[:8]}"
         return cls(
             run_id=actual_run_id,
@@ -35,4 +54,5 @@ class PipelineState:
             current_stage="pending",
             selected_runner=selected_runner,
             shared_context={"created_at": datetime.now(timezone.utc).isoformat()},
+            routing=routing,
         )

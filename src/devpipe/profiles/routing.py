@@ -13,7 +13,7 @@ class RouteCondition(BaseModel):
     value: Any
 
     SUPPORTED_OPERATORS: ClassVar[set[str]] = {"eq", "neq", "gt", "gte", "lt", "lte", "in", "contains"}
-    VALID_FIELD_PREFIXES: ClassVar[set[str]] = {"input.", "in.", "out.", "context.", "runtime."}
+    VALID_FIELD_PREFIXES: ClassVar[set[str]] = {"input.", "in.", "stage.", "out.", "context.", "runtime.", "integration."}
 
     @field_validator("op")
     @classmethod

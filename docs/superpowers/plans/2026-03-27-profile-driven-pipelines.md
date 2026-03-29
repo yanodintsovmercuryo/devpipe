@@ -6,7 +6,24 @@
 
 **Architecture:** Профиль разделяется на два независимых слоя: `stages` описывают контракты данных и агентные настройки, `routing` описывает стартовую stage и правила переходов. Рантайм больше не знает про глобальный порядок стадий или кодовые `on_success`-переходы, а вычисляет следующую stage по данным `out`, `input`, `context` и декларативным правилам `next_stages`.
 
-**Tech Stack:** Python, YAML, existing `questionary` TUI, current runner abstraction (`codex` / `claude`), existing artifact/history/config loaders.
+**Tech Stack:** Python, YAML, **existing Textual TUI**, current runner abstraction (`codex` / `claude`), existing artifact/history/config loaders.
+
+**Important:** Textual TUI уже реализована (`src/devpipe/ui/`). Задача — не создавать новую TUI, а сделать существующую **profile-aware**.
+
+---
+
+## 📊 Current Status Summary
+
+- ✅ **Task 1**: Profile runtime model — COMPLETE (100%)
+- ❌ **Task 2**: Runtime routing — NOT STARTED (0%)
+- ❌ **Task 3**: Declarative bindings — NOT STARTED (0%)
+- ⚠️ **Task 4**: Profile-aware CLI & TUI — PARTIALLY (30%) — TUI exists, needs profile integration
+- ❌ **Task 5**: Profile-scoped history — NOT STARTED (0%)
+- ⚠️ **Task 6**: Builtin profile & examples — PARTIALLY (30%) — has example but in old DSL
+
+**Overall Progress:** ~20%
+
+**Blocking Path:** Task 2 → unlocks Tasks 3, 4, 5 → then Task 6
 
 ---
 
@@ -152,7 +169,25 @@ git add src/devpipe/profiles/stages.py src/devpipe/profiles/routing.py src/devpi
 git commit -m "feat(profiles): add stage and routing profile models"
 ```
 
-### Task 2: Перевести runtime на `routing` и rule-based `next_stages`
+---
+
+### Task 1: Ввести profile runtime model с разделением `stages` и `routing` — ✅ COMPLETE
+
+**Files:**
+- ✅ `src/devpipe/profiles/stages.py`
+- ✅ `src/devpipe/profiles/routing.py`
+- ✅ `src/devpipe/profiles/loader.py`
+- ✅ `tests/profiles/test_stages.py`
+- ✅ `tests/profiles/test_routing.py`
+- ✅ `tests/profiles/test_loader.py`
+
+**Status:** All 46 profile tests passing.
+
+**Commit:** `86d84b3 feat(profiles): add stage and routing profile models`
+
+---
+
+### Task 2: Перевести runtime на `routing` и rule-based `next_stages` — ❌ NOT STARTED — ❌ NOT STARTED
 
 **Files:**
 - Modify: `src/devpipe/runtime/state.py`
@@ -165,9 +200,9 @@ git commit -m "feat(profiles): add stage and routing profile models"
 
 Покрыть:
 - старт с `routing.start_stage`
-- переход по `next_stages[*]`
+- переход по `next_stages[*]` (first match wins)
 - завершение на `completed`
-- возврат `qa_stand -> developer`
+- business reroute (например, `qa_stand -> developer`)
 - корректную работу `first_stage` / `last_stage` относительно активного routing graph
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -181,31 +216,37 @@ Expected:
 - [ ] **Step 3: Replace global stage order with profile-driven routing**
 
 Изменения:
-- убрать зависимость runtime от глобального `STAGE_ORDER`
-- хранить доступные `stages` и `routing` в `PipelineState` или `PipelineEngine`
-- вычислять следующую stage через rule evaluator, а не через `next_stage(current_stage)`
+- Убрать зависимость runtime от глобального `STAGE_ORDER`
+- Хранить `routing: RoutingSpec` в `PipelineState` или передавать в `PipelineEngine`
+- Реализовать rule evaluator: пройти по `next_stages`, вычислить `field` значения, сравнить условия, выбрать `stage`
 - `app.run()` должен идти по graph профиля, а не по кодовому списку стадий
 
 - [ ] **Step 4: Separate retries from business rerouting**
 
-Оставить текущее поведение:
-- retry policy по имени stage
+Оставить:
+- retry policy по имени stage (retry_limit из StageSpec)
 - pipeline failure при исчерпании retries
 
-Изменить поведение:
-- `qa_stand -> developer` считается нормальным business transition
+Изменить:
+- `qa_stand -> developer` считается нормальным business transition (не retry)
 - retry нельзя использовать вместо `next_stages`
-- возврат на доработку должен создавать новую попытку `developer` в рамках того же run
+- возврат на доработку должен создавать **новую попытку** `developer` в рамках того же run (увеличивать attempt_number)
 
 - [ ] **Step 5: Persist stage attempts in history state**
 
 Runtime state должен хранить попытки вида:
-- `stage`
-- `attempt_number`
-- `in_snapshot`
-- `out_snapshot`
-- `selected_rule`
-- `next_stage`
+```python
+attempts: [
+  {
+    "stage": "developer",
+    "attempt_number": 1,
+    "in_snapshot": {...},      # входные данные stage
+    "out_snapshot": {...},     # выходные данные stage
+    "selected_rule": {...},    # какое правило сработало
+    "next_stage": "qa_stand"
+  }
+]
+```
 
 Это нужно, чтобы TUI и history могли показать цикл `developer -> qa_stand -> developer`.
 
@@ -224,25 +265,28 @@ git add src/devpipe/runtime/state.py src/devpipe/runtime/transitions.py src/devp
 git commit -m "refactor(runtime): drive stage flow from routing rules"
 ```
 
-### Task 3: Ввести декларативные `in`/`out` bindings и typed inputs
+---
+
+### Task 3: Ввести декларативные `in`/`out` bindings и typed inputs — ❌ NOT STARTED
 
 **Files:**
-- Modify: `src/devpipe/stages/loader.py`
-- Modify: `src/devpipe/stages/envelope.py`
+- Create: `src/devpipe/bindings.py` (resolver)
 - Modify: `src/devpipe/app.py`
+- Modify: `src/devpipe/roles/envelope.py` (при необходимости)
 - Create: `tests/stages/test_bindings.py`
 
 - [ ] **Step 1: Write failing tests for stage bindings**
 
 Покрыть:
-- маппинг `input.*`
-- маппинг `stage.<name>.out.*`
-- маппинг `runtime.*`
-- `multi: true` для `string`
-- `multi: true` для `int`
-- `custom: false` запрещает произвольные значения
-- `custom: true` разрешает произвольные значения
-- error on missing required binding
+- маппинг `input.<key>` → из `RunConfig.extra_params` или profile defaults
+- маппинг `stage.<name>.out.<field>` → из `state.artifacts["stage_outputs"][<name>]`
+- маппинг `context.shared` → из `state.shared_context`
+- маппинг `runtime.git.current_branch` → через `git_adapter`
+- маппинг `integration.jira.issue` → через `jira_adapter`
+- `multi: true` для `string` и `int` (списки)
+- `custom: false` запрещает значения вне `values`
+- `custom: true` разрешает любые значения типа
+- error при отсутствии обязательного binding
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -250,27 +294,28 @@ Run:
 - `PYTHONPATH=src .venv/bin/pytest tests/stages/test_bindings.py -q`
 
 Expected:
-- FAIL из-за отсутствия typed input validation и stage-aware bindings
+- FAIL из-за отсутствия binding resolver
 
 - [ ] **Step 3: Introduce declarative binding resolver**
 
-Поддержать источники:
-- `input.<key>`
-- `stage.<stage_name>.out.<field>`
-- `context.shared`
-- `runtime.git.current_branch`
-- `integration.jira.issue`
+Создать `src/devpipe/bindings.py`:
 
-Не вводить произвольный eval/template language. Только path-based lookups и builtin resolvers.
+Поддерживаемые источники:
+- `input.<key>` — глобальные входы из профиля `inputs`
+- `stage.<stage_name>.out.<field>` — выходы предыдущих стадий
+- `context.shared` — общий контекст (`state.shared_context`)
+- `runtime.git.current_branch` — текущая git ветка
+- `integration.jira.issue` — данные Jira (если адаптер есть)
+
+**Не** вводить произвольный eval/template language. Только path-based lookups и builtin resolvers.
 
 - [ ] **Step 4: Replace hardcoded release-specific context assembly**
 
-Убрать из `src/devpipe/app.py` прямую сборку `release_inputs`.
+Убрать из `src/devpipe/app.py:119-134` прямую сборку `release_inputs`.
 
-Вместо этого описывать в `pipeline.yml`:
-- какие поля нужны stage
-- откуда они берутся через `in`
-- какие поля stage обязана вернуть через `out`
+Вместо этого профиль описывает:
+- какие поля нужны stage (`stage.out`)
+- откуда они берутся (`stage.in.bindings`)
 
 - [ ] **Step 5: Make `TaskEnvelope` consume resolved stage inputs**
 
@@ -287,65 +332,85 @@ Expected:
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/devpipe/stages/loader.py src/devpipe/stages/envelope.py src/devpipe/app.py tests/stages/test_bindings.py tests/e2e/test_full_pipeline.py
+git add src/devpipe/bindings.py tests/stages/test_bindings.py
 git commit -m "feat(pipeline): resolve stage inputs from declarative bindings"
 ```
 
-### Task 4: Сделать profile-aware CLI, TUI и project config
+---
+
+### Task 4: Сделать существующий CLI и Textual TUI profile-aware — ⚠️ IN PROGRESS (30%)
 
 **Files:**
-- Modify: `src/devpipe/cli.py`
-- Modify: `src/devpipe/tui.py`
 - Modify: `src/devpipe/project_config.py`
+- Modify: `src/devpipe/cli.py`
+- Modify: `src/devpipe/app.py`
+- Modify: `src/devpipe/ui/app.py`
+- Modify: `src/devpipe/ui/services.py`
+- Modify: `src/devpipe/ui/screens/config_screen.py`
 - Test: `tests/test_cli.py`
-- Test: `tests/tui/test_profile_selection.py`
+- Test: `tests/ui/test_config_screen.py`
+
+**Current State:**
+- ✅ Textual TUI exists (`src/devpipe/ui/`)
+- ✅ CLI exists (`src/devpipe/cli.py`)
+- ⚠️ `src/devpipe/ui/services.py` has `discover_profiles()` and `load_profile_stages()` but reads old `flow.transitions` format (needs fix to use `load_profile()`)
+- ❌ No `--profile` flag in CLI
+- ❌ No profile selection UI in ConfigScreen
+- ⚠️ Integration progress: ~30%
 
 - [ ] **Step 1: Write failing tests for profile selection**
 
 Покрыть:
 - `devpipe run --profile <name>`
-- fallback на builtin default profile
-- project default profile из `.devpipe/config.yaml`
+- fallback на builtin default profile (если нет project profile)
+- project default profile из `.devpipe/config.yaml:defaults.profile`
 - ошибка при неизвестном profile name
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run:
-- `PYTHONPATH=src .venv/bin/pytest tests/test_cli.py tests/tui/test_profile_selection.py -q`
+- `PYTHONPATH=src .venv/bin/pytest tests/test_cli.py -q`
 
 Expected:
-- FAIL, потому что CLI/TUI не знают про profile loading
+- FAIL, потому что `--profile` не существует
 
 - [ ] **Step 3: Extend project config**
 
 Добавить в `.devpipe/config.yaml`:
-- `defaults.profile`
-- при необходимости `available.profiles`
+```yaml
+defaults:
+  profile: delivery-default  # или current-delivery
+```
 
-`load_project_config()` должен уметь:
-- читать default profile
-- находить project profiles из `.devpipe/profiles/*`
-- отдавать список stage names активного профиля
+`load_project_config()` → читает `defaults.profile`.
 
-- [ ] **Step 4: Update console CLI**
+- [ ] **Step 4: Add profile support to CLI**
 
 Изменения:
-- добавить `--profile`
-- при `run` передавать `profile_name` в `RunConfig`
-- `inspect` уметь показывать `stages` и `routing` активного profile
+- Добавить `--profile` в `run` подкоманду (`src/devpipe/cli.py`)
+- В `RunConfig` добавить поле `profile: str | None`
+- В `build_default_app()` или `app.run()` загружать профиль через `load_profile()` и передавать в `OrchestratorApp`
+- `inspect` команда: показывать `stages` и `routing` активного профиля
 
 - [ ] **Step 5: Update TUI configuration screen**
 
-Поведение:
-- в меню конфигурации добавить `Set profile`
-- при смене profile полностью пересобирать экран, summary, stage-range options, input params, history
-- `first_stage` / `last_stage` показывать только `stages` активного profile
-- если новый profile не содержит ранее выбранные стадии или параметры, сбрасывать их
+`src/devpipe/ui/screens/config_screen.py`:
 
-- [ ] **Step 6: Run tests to verify UI/CLI selection passes**
+Поведение:
+- Добавить dropdown/выбор профиля в экран конфигурации
+- При смене профиля:
+  - перестраивать список stages (из `profile.stages`)
+  - обновлять `first_role` / `last_role` dropdowns (ограничить только stages из профиля)
+  - сбрасывать поля, которых нет в новом профиле
+  - обновлять default значения из `profile.defaults`
+- Протащить `profile_name` через `UIState` → `RunConfig`
+
+**Note:** `src/devpipe/ui/services.py` уже имеет `discover_profiles()` и `load_profile_stages()`, но `load_profile_stages()` читает старый `flow.transitions` формат. Нужно исправить на `load_profile()`.
+
+- [ ] **Step 6: Run tests to verify UI/CLI profile selection passes**
 
 Run:
-- `PYTHONPATH=src .venv/bin/pytest tests/test_cli.py tests/tui/test_profile_selection.py -q`
+- `PYTHONPATH=src .venv/bin/pytest tests/test_cli.py tests/ui/test_config_screen.py -q`
 
 Expected:
 - PASS
@@ -353,25 +418,30 @@ Expected:
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/devpipe/cli.py src/devpipe/tui.py src/devpipe/project_config.py tests/test_cli.py tests/tui/test_profile_selection.py
-git commit -m "feat(ui): add profile selection to cli and tui"
+git add src/devpipe/project_config.py src/devpipe/cli.py src/devpipe/app.py src/devpipe/ui/app.py src/devpipe/ui/services.py src/devpipe/ui/screens/config_screen.py tests/test_cli.py tests/ui/test_config_screen.py
+git commit -m "feat(ui): integrate profile selection into cli and textual tui"
 ```
 
-### Task 5: Разделить history по профилям и сохранять циклы stage attempts
+---
+
+### Task 5: Profile-scoped history with stage attempts — ❌ NOT STARTED
 
 **Files:**
 - Modify: `src/devpipe/history.py`
 - Modify: `src/devpipe/app.py`
-- Modify: `src/devpipe/tui.py`
+- Modify: `src/devpipe/ui/app.py`
+- Modify: `src/devpipe/ui/services.py`
+- Modify: `src/devpipe/ui/screens/history_screen.py`
 - Test: `tests/test_history.py`
 
 - [ ] **Step 1: Write failing tests for profile-scoped history**
 
 Покрыть:
-- запись run в историю активного profile
-- изоляцию history между двумя profile names
-- сохранение нескольких попыток одной stage в одном run
-- корректную загрузку history для TUI только по активному profile
+- `save_run(config)` записывает `profile` из `config`
+- `load_history(profile_name)` возвращает только runs с этим `profile`
+- изоляцию history между двумя profile names (разные файлы или фильтрация)
+- сохранение массива `attempts[]` с полями: `stage`, `attempt_number`, `in_snapshot`, `out_snapshot`, `selected_rule`, `next_stage`
+- корректную загрузку истории в TUI только по активному profile
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -379,104 +449,342 @@ Run:
 - `PYTHONPATH=src .venv/bin/pytest tests/test_history.py -q`
 
 Expected:
-- FAIL из-за отсутствия profile-aware history и stage attempts
+- FAIL из-за отсутствия profile в `save_run()`/`load_history()`
 
 - [ ] **Step 3: Change history storage shape**
 
-Рекомендованный формат:
-- отдельные файлы `~/.devpipecfg/history/<profile>.yaml`
+Рекомендуемый формат: отдельные файлы `~/.devpipecfg/history/<profile>.yaml`
 
-Причины:
+Преимущества:
 - проще дебажить
 - нет конфликтов при частичной порче файла
 - легче чистить profile-specific history
 
-Структура записи run должна включать:
-- `profile`
-- `started_at`
-- `finished_at`
-- `status`
-- `attempts[]`
+Альтернатива: один файл `history.yaml` с группировкой по `profile` (но это сложнее).
+
+Структура записи run:
+```yaml
+- profile: current-delivery
+  run_id: task-abc123
+  task: "Implement feature X"
+  task_id: ABC-123
+  runner: codex
+  started_at: "2026-03-29T10:00:00Z"
+  finished_at: "2026-03-29T10:45:00Z"
+  status: completed
+  attempts:
+    - stage: architect
+      attempt_number: 1
+      in_snapshot: {task: "...", ...}
+      out_snapshot: {summary: "...", plan: "..."}
+      selected_rule: {stage: "developer", default: true}
+      next_stage: developer
+    - stage: developer
+      attempt_number: 1
+      ...
+```
 
 - [ ] **Step 4: Thread profile name through run config**
 
-`RunConfig` должен включать `profile`.
+`RunConfig` → добавить `profile: str | None`.
 
-`save_run()` и `load_history()` должны принимать profile name явно, без скрытых глобальных fallback.
+`save_run(config)` → использовать `config.profile` для пути к файлу.
 
-- [ ] **Step 5: Run tests to verify history passes**
+`load_history(profile_name)` → явный параметр, возвращает список runs для profile.
+
+- [ ] **Step 5: Update TUI history screen**
+
+`src/devpipe/ui/screens/history_screen.py`:
+
+- Показывать только runs активного профиля (`UIState.profile`)
+- Добавить детализацию attempts (клик на run → показать цепочку stage попыток)
+
+- [ ] **Step 6: Run tests to verify history passes**
 
 Run:
-- `PYTHONPATH=src .venv/bin/pytest tests/test_history.py tests/test_cli.py tests/tui/test_profile_selection.py -q`
+- `PYTHONPATH=src .venv/bin/pytest tests/test_history.py tests/ui/test_history_screen.py -q`
 
 Expected:
 - PASS
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/devpipe/history.py src/devpipe/app.py src/devpipe/ui/app.py src/devpipe/ui/services.py src/devpipe/ui/screens/history_screen.py tests/test_history.py
+git commit -m "feat(history): profile-scoped run history with stage attempt tracking"
+```
+
+---
+
+### Task 6: Convert builtin profile & provide examples — ⚠️ PARTIALLY (30%)
+
+**Files:**
+- Modify: `.devpipe/profiles/current-delivery/pipeline.yml` (convert to new DSL)
+- Create: `profiles/default/pipeline.yml` (builtin copy)
+- Create: `profiles/default/agents/*` (if needed)
+- Create/Modify: `examples/acquiring/.devpipe/profiles/acquiring-service/pipeline.yml`
+- Create/Modify: `examples/acquiring/.devpipe/profiles/acquiring-service/agents/*`
+- Create: `examples/acquiring/.devpipe/config.yaml`
+- Modify: `README.md`
+
+**Current State:**
+- ✅ `.devpipe/profiles/current-delivery/` exists with `pipeline.yml` and `agents/`
+- ⚠️ `pipeline.yml` uses **old DSL** (`roles` + `flow.transitions`) — needs conversion
+- ❌ No builtin profile in repo (`profiles/default/`)
+- ❌ No updated `examples/acquiring/`
+- ⚠️ Conversion progress: ~30%
+
+- [ ] **Step 1: Convert current-delivery to new DSL**
+
+Преобразовать `.devpipe/profiles/current-delivery/pipeline.yml`:
+
+Было (old DSL):
+```yaml
+roles:
+  architect: { runner, model, effort, agent, requires, consumes, produces, retry_limit }
+  ...
+flow:
+  start: architect
+  transitions:
+    architect: { on_success: developer, on_failure: failed }
+    ...
+```
+
+Стало (new DSL):
+```yaml
+version: 1
+name: current-delivery
+
+defaults:
+  runner: auto
+  model: middle
+  effort: middle
+
+inputs:
+  task:
+    type: string
+    default: ""
+    custom: true
+  task_id:
+    type: string
+    required: false
+  target_branch:
+    type: string
+    required: false
+  namespace:
+    type: string
+    required: false
+  service:
+    type: string
+    required: false
+  tags:
+    type: array
+    default: []
+  extra_params:
+    type: object
+    default: {}
+
+stages:
+  architect:
+    runner: codex
+    model: medium
+    effort: medium
+    retry_limit: 2
+    agent:
+      prompt: agents/architect/prompt.md
+      output_schema: agents/architect/output.schema.json
+    in:
+      task: input.task
+      jira: integration.jira.issue  # optional if jira_adapter present
+      shared_context: context.shared
+    out:
+      architecture_plan: { type: object }
+
+  developer:
+    runner: codex
+    model: high
+    effort: middle
+    retry_limit: 2
+    agent:
+      prompt: agents/developer/prompt.md
+      output_schema: agents/developer/output.schema.json
+    in:
+      task: input.task
+      architecture_plan: stage.architect.out.architecture_plan
+      shared_context: context.shared
+    out:
+      code_changes: { type: object }
+
+  ... (остальные stages аналогично)
+
+routing:
+  start_stage: architect
+  by_stage:
+    architect:
+      next_stages:
+        - stage: developer
+          default: true
+    developer:
+      next_stages:
+        - stage: test_developer
+          default: true
+    ... (линейный flow → только default правила)
+```
+
+**Важно:** Сохранить промпты и схемы в `agents/` без изменений.
+
+- [ ] **Step 2: Create builtin default profile**
+
+Скопировать конвертированный профиль в `profiles/default/pipeline.yml` (внутри репозитория, не в `.devpipe/`). Это builtin профиль по умолчанию, который доступен даже без project-specific `.devpipe/`.
+
+- [ ] **Step 3: Create/update acquiring example**
+
+`examples/acquiring/.devpipe/` должен содержать:
+
+1. `config.yaml`:
+```yaml
+defaults:
+  profile: acquiring-service
+```
+
+2. `profiles/acquiring-service/pipeline.yml` — пример с использованием:
+- typed inputs (`multi: true`, `custom: true/false`)
+- сложными `in` bindings
+- условными `next_stages` (`all` / `any`)
+
+3. `profiles/acquiring-service/agents/` — минимум 2-3 staged промпта (можно упрощённые).
+
+- [ ] **Step 4: Document the profile DSL**
+
+`README.md` должен содержать разделы:
+
+- **Profile Structure**: `.devpipe/profiles/<name>/pipeline.yml` и `agents/`
+- **Selecting a Profile**: CLI `--profile`, TUI dropdown, `.devpipe/config.yaml:defaults.profile`
+- **Inputs**: `inputs.<key>.type`, `default`, `values`, `multi`, `custom`
+- **Stages**: `stages.<name>.runner`, `model`, `effort`, `retry_limit`, `agent.{prompt,output_schema}`, `in.bindings`, `out.fields`
+- **Routing**: `routing.start_stage`, `routing.by_stage.<stage>.next_stages[*].{stage,all,any,default}`
+- **Conditions**: `field`, `op` (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `contains`)
+- **Binding Sources**: `input.*`, `stage.*.out.*`, `context.*`, `runtime.*`, `integration.*`
+- **Example**: показать минимальный рабочий профиль
+
+- [ ] **Step 5: Run full test suite verification**
+
+Run:
+```bash
+PYTHONPATH=src .venv/bin/pytest tests/profiles/ tests/stages/ tests/e2e/ tests/test_history.py tests/test_cli.py tests/ui/ -q
+```
+
+Expected:
+- PASS (все 200+ тестов)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/devpipe/history.py src/devpipe/app.py src/devpipe/tui.py tests/test_history.py
-git commit -m "feat(history): scope run history by profile and stage attempts"
+git add profiles/default examples/acquiring README.md
+git commit -m "docs(profiles): add builtin default profile and acquiring example with new DSL"
 ```
 
-### Task 6: Вынести builtin default profile и обновить DSL examples
+---
 
-**Files:**
-- Create: `profiles/default/pipeline.yml`
-- Create: `profiles/default/agents/*`
-- Create: `examples/acquiring/.devpipe/config.yaml`
-- Create: `examples/acquiring/.devpipe/profiles/acquiring-service/pipeline.yml`
-- Create: `examples/acquiring/.devpipe/profiles/acquiring-service/agents/*`
-- Modify: `README.md`
+## Pipeline DSL Reference (Final)
 
-- [ ] **Step 1: Move current built-in delivery pipeline into builtin profile**
+```yaml
+version: 1
+name: delivery-default
 
-Builtin profile должен описывать текущий flow через `stages` и `routing`:
-- `architect`
-- `developer`
-- `test_developer`
-- `qa_local`
-- `release`
-- `qa_stand`
+defaults:
+  runner: auto
+  model: middle
+  effort: middle
 
-Все prompts и schemas должны жить рядом с profile, а не в глобальном `stages/` legacy-каталоге.
+inputs:
+  task:
+    type: string
+    default: ""
+    custom: true
+  environment:
+    type: string
+    default: qa
+    values: [dev, qa, prod]
+    custom: false
+  tags:
+    type: array
+    default: []
+    multi: true
+    custom: true
 
-- [ ] **Step 2: Add project example for acquiring**
+stages:
+  developer:
+    runner: codex
+    model: medium
+    effort: medium
+    retry_limit: 2
+    agent:
+      prompt: agents/developer/prompt.md
+      output_schema: agents/developer/output.schema.json
+    in:
+      task: input.task
+      env: input.environment
+      shared: context.shared
+    out:
+      code_changes: { type: object }
+      tests: { type: object }
 
-Положить reference example с:
-- typed `inputs`
-- `multi`
-- `custom`
-- stage-local `in` / `out`
-- `routing.by_stage.<stage>.next_stages`
+  qa_stand:
+    runner: codex
+    model: medium
+    effort: medium
+    retry_limit: 1
+    agent:
+      prompt: agents/qa_stand/prompt.md
+      output_schema: agents/qa_stand/output.schema.json
+    in:
+      code: stage.developer.out.code_changes
+      env: input.environment
+    out:
+      verdict: { type: string }
+      defects: { type: int }
 
-Example не обязан быть executable end-to-end в тестах, но должен быть синтаксически валидный и консистентный.
-
-- [ ] **Step 3: Document the profile DSL**
-
-README должен объяснить:
-- как устроен `.devpipe/profiles/{name}/`
-- как выбрать profile в CLI и TUI
-- как задать default profile в `.devpipe/config.yaml`
-- как описывать `inputs`
-- как описывать `stages`
-- как описывать `routing`
-- как задавать условия в `next_stages`
-
-- [ ] **Step 4: Run verification**
-
-Run:
-- `PYTHONPATH=src .venv/bin/pytest tests/profiles/test_stages.py tests/profiles/test_routing.py tests/profiles/test_loader.py tests/stages/test_bindings.py tests/test_history.py tests/test_cli.py tests/tui/test_profile_selection.py tests/e2e/test_full_pipeline.py -q`
-
-Expected:
-- PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add profiles/default README.md examples/acquiring
-git commit -m "docs(profiles): add builtin and acquiring stage-routing examples"
+routing:
+  start_stage: developer
+  by_stage:
+    developer:
+      next_stages:
+        - stage: qa_stand
+          default: true
+    qa_stand:
+      next_stages:
+        - stage: developer
+          any:
+            - field: out.verdict
+              op: eq
+              value: needs_rework
+            - field: out.defects
+              op: gt
+              value: 0
+        - stage: release
+          all:
+            - field: out.verdict
+              op: eq
+              value: approved
+            - field: out.defects
+              op: eq
+              value: 0
+        - stage: failed
+          default: true
 ```
+
+---
+
+## Design Notes
+
+- `next_stages` replaces `on_success` / `on_failure` outcomes
+- Business reroute (e.g., `qa_stand -> developer`) is **not** a retry; it increments `attempt_number` but uses the same run
+- `multi` allowed for any `type` (arrays)
+- `custom` means UI can accept values outside `values` list
+- Binding sources: `input.*`, `stage.*.out.*`, `context.*`, `runtime.*`, `integration.*`
+- Retry remains for technical failures only (exceptions); managed by `retry_limit` in `StageSpec`
+- Rule evaluation: first matching rule wins; if none match and no default → runtime error
 
 ## Pipeline DSL Draft
 

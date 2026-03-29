@@ -13,6 +13,7 @@ from devpipe.runtime.retry import RetryPolicy
 from devpipe.runtime.state import STAGE_ORDER, PipelineState
 from devpipe.runners.claude import ClaudeRunner
 from devpipe.runners.codex import CodexRunner
+from devpipe.profiles.loader import ProfileDefinition
 from devpipe.runners.profile_map import (
     RunnerProfiles,
     load_runner_profiles,
@@ -53,6 +54,7 @@ class OrchestratorApp:
         retry_policy: RetryPolicy | None = None,
         project_root: str | Path | None = None,
         runner_profiles: RunnerProfiles | None = None,
+        profile: "ProfileDefinition | None" = None,
     ) -> None:
         self.roles = roles
         self.runners = runners
@@ -61,7 +63,8 @@ class OrchestratorApp:
         self.git_adapter = git_adapter
         self.github_adapter = github_adapter
         self.kubernetes_adapter = kubernetes_adapter
-        self.engine = PipelineEngine(retry_policy=retry_policy)
+        self.profile = profile
+        self.engine = PipelineEngine(retry_policy=retry_policy, routing=profile.routing if profile else None)
         self.project_root = Path(project_root) if project_root is not None else None
         self.runner_profiles = runner_profiles or {}
         self._cancel_requested = threading.Event()
@@ -76,22 +79,54 @@ class OrchestratorApp:
         save_run(config)
         self._cancel_requested.clear()
 
-        first_role = config.first_role or STAGE_ORDER[0]
-        last_role = config.last_role or STAGE_ORDER[-1]
+        # Determine stage bounds based on profile availability
+        if self.profile:
+            profile_stages = list(self.profile.stages.keys())
+            if not profile_stages:
+                raise ValueError("Profile has no stages defined")
+            default_first = self.profile.routing.start_stage
+            default_last = profile_stages[-1]
+            first_role = config.first_role or default_first
+            last_role = config.last_role or default_last
+            available_stages = set(profile_stages)
+            stage_order = profile_stages
+        else:
+            first_role = config.first_role or STAGE_ORDER[0]
+            last_role = config.last_role or STAGE_ORDER[-1]
+            available_stages = set(STAGE_ORDER)
+            stage_order = STAGE_ORDER
 
-        if first_role not in STAGE_ORDER:
+        if first_role not in available_stages:
             raise ValueError(f"Unknown first_role: {first_role}")
-        if last_role not in STAGE_ORDER:
+        if last_role not in available_stages:
             raise ValueError(f"Unknown last_role: {last_role}")
-        if STAGE_ORDER.index(first_role) > STAGE_ORDER.index(last_role):
+        if stage_order.index(first_role) > stage_order.index(last_role):
             raise ValueError(f"first_role '{first_role}' must come before last_role '{last_role}'")
 
         task_id = config.task_id or "no-id"
-        state = PipelineState.create(task_id=task_id, task_text=config.task, selected_runner=config.runner)
+        state = PipelineState.create(
+            task_id=task_id,
+            task_text=config.task,
+            selected_runner=config.runner,
+            routing=self.profile.routing if self.profile else None,
+        )
+        # Populate top-level inputs and integration/runtime contexts
+        state.inputs = config.extra_params or {}
         state.release_context.update({**(config.extra_params or {})})
 
+        # Runtime info
+        if self.git_adapter is not None:
+            current_branch = (
+                self.git_adapter.current_branch()
+                if hasattr(self.git_adapter, "current_branch")
+                else None
+            )
+            state.runtime["git"] = {"current_branch": current_branch}
+
+        # Integration info
         if self.jira_adapter is not None and config.task_id:
-            state.shared_context["jira"] = self.jira_adapter.fetch_issue(config.task_id)
+            issue = self.jira_adapter.fetch_issue(config.task_id)
+            state.integration["jira"] = {"issue": issue}
 
         logger = RunLogger(self.runs_dir, state.run_id)
         artifacts = ArtifactStore(logger.run_dir)
@@ -132,6 +167,9 @@ class OrchestratorApp:
                         "service": config.service,
                         **(config.extra_params or {}),
                     }
+
+                # Capture stage inputs for attempt tracking
+                state._current_stage_inputs = stage_context.copy()
 
                 envelope = build_envelope(
                     role,
@@ -175,12 +213,30 @@ class OrchestratorApp:
                 success = Event(EventType.STAGE_COMPLETED, stage=role.name, summary=result.summary)
                 logger.log_event(success)
                 state = self.engine.apply(state, success)
-                logger.write_summary(state)
 
-                if role.name == last_role and state.status not in {"completed", "failed"}:
+                # Check for forced completion based on last_role bound
+                forced_completion = (
+                    role.name == last_role and state.status not in {"completed", "failed"}
+                )
+                if forced_completion:
                     state.status = "completed"
                     state.current_stage = "completed"
-                    logger.write_summary(state)
+
+                # Record stage attempt (after final next_stage is determined)
+                if state._current_stage_inputs is not None:
+                    attempt = {
+                        "stage": role.name,
+                        "attempt_number": len(state.stage_attempts) + 1,
+                        "in_snapshot": state._current_stage_inputs,
+                        "out_snapshot": result.structured_output,
+                        "selected_rule": state.last_selected_rule,
+                        "next_stage": state.current_stage,
+                    }
+                    state.stage_attempts.append(attempt)
+                    state._current_stage_inputs = None
+                    state.last_selected_rule = None
+
+                logger.write_summary(state)
 
                 if role.name == "release" and self.github_adapter is not None:
                     self.github_adapter.ensure_workflow_success(state.run_id)
