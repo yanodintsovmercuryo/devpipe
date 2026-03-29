@@ -105,10 +105,11 @@ class RoutingSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_stage_references(self) -> RoutingSpec:
-        """Validate all stage references in next_stages exist."""
+        """Validate all stage references in next_stages exist (except special terminal stages)."""
         available_stages = set(self.by_stage.keys())
+        special_stages = {"completed", "failed"}
         for stage_name, routing in self.by_stage.items():
             for rule in routing.next_stages:
-                if rule.stage not in available_stages:
+                if rule.stage not in available_stages and rule.stage not in special_stages:
                     raise ValueError(f"Stage '{stage_name}' references undefined stage '{rule.stage}'")
         return self

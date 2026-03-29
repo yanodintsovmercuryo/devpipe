@@ -40,6 +40,7 @@ class RunConfig:
     extra_params: dict[str, str | list[str]] | None = None
     first_role: str | None = None
     last_role: str | None = None
+    profile: str | None = None
 
 
 class OrchestratorApp:
@@ -77,7 +78,6 @@ class OrchestratorApp:
         on_stage_complete: "Callable[[str, dict], None] | None" = None,
     ) -> PipelineState:
         from devpipe.history import finish_run, save_run
-        save_run(config)
         self._cancel_requested.clear()
 
         # Determine stage bounds based on profile availability
@@ -145,6 +145,9 @@ class OrchestratorApp:
         logger.log_event(event)
         state = self.engine.apply(state, event)
         state.current_stage = first_role
+
+        # Save initial run entry (status=running, no attempts yet)
+        save_run(config, state)
 
         try:
             while state.status not in {"completed", "failed", "cancelled"}:
@@ -275,7 +278,7 @@ class OrchestratorApp:
                     self.github_adapter.ensure_workflow_success(state.run_id)
         finally:
             logger.write_summary(state)
-            finish_run(config)
+            save_run(config, state)  # Update with final status and attempts
 
         return state
 
@@ -290,7 +293,11 @@ class OrchestratorApp:
                 cancel()
 
 
-def build_default_app(base_dir: str | Path) -> OrchestratorApp:
+def build_default_app(
+    base_dir: str | Path,
+    profile_name: str | None = None,
+    project_root: str | Path | None = None,
+) -> OrchestratorApp:
     base = Path(base_dir)
     config_store = ConfigStore(base / "config" / "runners.yaml")
     raw_config = config_store.load()
@@ -311,10 +318,20 @@ def build_default_app(base_dir: str | Path) -> OrchestratorApp:
         ),
     }
 
+    # Load profile if specified
+    profile = None
+    if profile_name:
+        from devpipe.profiles.loader import load_profile
+        profile = load_profile(
+            profile_name,
+            project_root=Path(project_root) if project_root else None,
+        )
+
     return OrchestratorApp(
         roles=roles,
         runners=runners,
         runs_dir=base / "runs",
-        project_root=Path.cwd(),
+        project_root=Path(project_root) if project_root else Path.cwd(),
         runner_profiles=runner_profiles,
+        profile=profile,
     )

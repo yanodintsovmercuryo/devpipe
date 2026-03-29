@@ -436,6 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--task-id", default=None)
     run_parser.add_argument("--task", required=True)
     run_parser.add_argument("--runner", required=True, choices=["codex", "claude", "auto"])
+    run_parser.add_argument("--profile", default=None, help="Profile name to use for pipeline")
     run_parser.add_argument("--roles-dir", default=None)
     run_parser.add_argument("--runs-dir", default=None)
     run_parser.add_argument("--target-branch")
@@ -470,13 +471,29 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         base_dir = Path(args.roles_dir).resolve().parents[0] if getattr(args, "roles_dir", None) else Path(__file__).resolve().parents[2]
-        app = build_default_app(base_dir)
+        app = build_default_app(base_dir, profile_name=config.profile, project_root=project_root)
 
-        first = config.first_role or STAGE_ORDER[0]
-        last = config.last_role or STAGE_ORDER[-1]
-        fi = STAGE_ORDER.index(first) if first in STAGE_ORDER else 0
-        li = STAGE_ORDER.index(last) if last in STAGE_ORDER else len(STAGE_ORDER) - 1
-        active_stages = STAGE_ORDER[fi: li + 1]
+        # Determine active stages for progress display
+        if app.profile:
+            profile_stages = list(app.profile.stages.keys())
+            first_role = config.first_role or app.profile.routing.start_stage
+            last_role = config.last_role or profile_stages[-1]
+            # Safely compute indices
+            if first_role in profile_stages:
+                first_idx = profile_stages.index(first_role)
+            else:
+                first_idx = 0
+            if last_role in profile_stages:
+                last_idx = profile_stages.index(last_role)
+            else:
+                last_idx = len(profile_stages) - 1
+            active_stages = profile_stages[first_idx: last_idx + 1]
+        else:
+            first = config.first_role or STAGE_ORDER[0]
+            last = config.last_role or STAGE_ORDER[-1]
+            fi = STAGE_ORDER.index(first) if first in STAGE_ORDER else 0
+            li = STAGE_ORDER.index(last) if last in STAGE_ORDER else len(STAGE_ORDER) - 1
+            active_stages = STAGE_ORDER[fi: li + 1]
 
         _stdin_fd = sys.stdin.fileno() if sys.stdin.isatty() else None
         _old_term = termios.tcgetattr(_stdin_fd) if _stdin_fd is not None else None
@@ -544,7 +561,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     base_dir = Path(args.roles_dir).resolve().parents[0] if args.roles_dir else Path(__file__).resolve().parents[2]
-    app = build_default_app(base_dir)
+    app = build_default_app(base_dir, profile_name=args.profile, project_root=Path.cwd())
     if args.runs_dir:
         app.runs_dir = Path(args.runs_dir)
     extra_params = {}
@@ -558,6 +575,7 @@ def main(argv: list[str] | None = None) -> int:
             task_id=args.task_id,
             task=args.task,
             runner=args.runner,
+            profile=args.profile,
             target_branch=args.target_branch,
             namespace=args.namespace,
             service=args.service,

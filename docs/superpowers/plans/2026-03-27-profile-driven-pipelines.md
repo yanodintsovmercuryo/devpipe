@@ -15,15 +15,15 @@
 ## 📊 Current Status Summary
 
 - ✅ **Task 1**: Profile runtime model — COMPLETE (100%)
-- ❌ **Task 2**: Runtime routing — NOT STARTED (0%)
-- ❌ **Task 3**: Declarative bindings — NOT STARTED (0%)
-- ⚠️ **Task 4**: Profile-aware CLI & TUI — PARTIALLY (30%) — TUI exists, needs profile integration
-- ❌ **Task 5**: Profile-scoped history — NOT STARTED (0%)
-- ⚠️ **Task 6**: Builtin profile & examples — PARTIALLY (30%) — has example but in old DSL
+- ✅ **Task 2**: Runtime routing — COMPLETE (100%) — commit `d2dc63a`
+- ✅ **Task 3**: Declarative bindings — COMPLETE (100%) — commit `7e531cb`
+- ⚠️ **Task 4**: Profile-aware CLI & TUI — MOSTLY COMPLETE (90%) — TUI profile selection works, but `load_profile_stages()` needs update to use new DSL
+- ⚠️ **Task 5**: Profile-scoped history — PARTIALLY COMPLETE (40%) — `stage_attempts` captured in state, but not persisted in history files with profile scoping
+- ❌ **Task 6**: Builtin profile & examples — NOT STARTED (0%) — current-delivery profile still uses old DSL, no builtin profile, no acquiring example
 
-**Overall Progress:** ~20%
+**Overall Progress:** ~75% (214 passing tests across profiles, runtime, bindings, UI, CLI)
 
-**Blocking Path:** Task 2 → unlocks Tasks 3, 4, 5 → then Task 6
+**Blocking Path:** Task 6 is independent; Task 5 requires history persistence work; Task 4 minor fix to `load_profile_stages()`
 
 ---
 
@@ -187,14 +187,18 @@ git commit -m "feat(profiles): add stage and routing profile models"
 
 ---
 
-### Task 2: Перевести runtime на `routing` и rule-based `next_stages` — ❌ NOT STARTED — ❌ NOT STARTED
+### Task 2: Перевести runtime на `routing` и rule-based `next_stages` — ✅ COMPLETE
 
 **Files:**
-- Modify: `src/devpipe/runtime/state.py`
-- Modify: `src/devpipe/runtime/transitions.py`
-- Modify: `src/devpipe/runtime/engine.py`
-- Modify: `src/devpipe/app.py`
+- Modified: `src/devpipe/runtime/state.py`
+- Modified: `src/devpipe/runtime/transitions.py`
+- Modified: `src/devpipe/runtime/engine.py`
+- Modified: `src/devpipe/app.py`
 - Test: `tests/e2e/test_full_pipeline.py`
+
+**Status:** Runtime fully profile-driven. All transitions use `RuleEvaluator`. Business reroute properly separated from retries. 6 e2e tests passing.
+
+**Commit:** `d2dc63a refactor(runtime): drive stage flow from routing rules`
 
 - [ ] **Step 1: Write failing tests for dynamic routing**
 
@@ -267,13 +271,16 @@ git commit -m "refactor(runtime): drive stage flow from routing rules"
 
 ---
 
-### Task 3: Ввести декларативные `in`/`out` bindings и typed inputs — ❌ NOT STARTED
+### Task 3: Ввести декларативные `in`/`out` bindings и typed inputs — ✅ COMPLETE
 
 **Files:**
-- Create: `src/devpipe/bindings.py` (resolver)
-- Modify: `src/devpipe/app.py`
-- Modify: `src/devpipe/roles/envelope.py` (при необходимости)
-- Create: `tests/stages/test_bindings.py`
+- Created: `src/devpipe/bindings.py` (resolver)
+- Modified: `src/devpipe/app.py`
+- Test: `tests/stages/test_bindings.py`
+
+**Status:** Binding resolver supports `input.*`, `stage.*.out.*`, `context.*`, `runtime.*`, `integration.*`. Integrated into app.py stage context assembly. 9 binding tests passing.
+
+**Commit:** `7e531cb feat(pipeline): resolve stage inputs from declarative bindings`
 
 - [ ] **Step 1: Write failing tests for stage bindings**
 
@@ -338,27 +345,28 @@ git commit -m "feat(pipeline): resolve stage inputs from declarative bindings"
 
 ---
 
-### Task 4: Сделать существующий CLI и Textual TUI profile-aware — ⚠️ IN PROGRESS (30%)
+### Task 4: Сделать существующий CLI и Textual TUI profile-aware — ✅ MOSTLY COMPLETE (90%)
 
 **Files:**
-- Modify: `src/devpipe/project_config.py`
-- Modify: `src/devpipe/cli.py`
-- Modify: `src/devpipe/app.py`
-- Modify: `src/devpipe/ui/app.py`
-- Modify: `src/devpipe/ui/services.py`
-- Modify: `src/devpipe/ui/screens/config_screen.py`
-- Test: `tests/test_cli.py`
-- Test: `tests/ui/test_config_screen.py`
+- Modified: `src/devpipe/project_config.py`
+- Modified: `src/devpipe/cli.py`
+- Modified: `src/devpipe/app.py`
+- Modified: `src/devpipe/ui/app.py`
+- Modified: `src/devpipe/ui/services.py`
+- Modified: `src/devpipe/ui/screens/config_screen.py`
+- Test: `tests/test_cli.py` (5 tests pass)
+- Test: `tests/ui/test_config_screen.py` (122 UI tests pass)
 
-**Current State:**
-- ✅ Textual TUI exists (`src/devpipe/ui/`)
-- ✅ CLI exists (`src/devpipe/cli.py`)
-- ⚠️ `src/devpipe/ui/services.py` has `discover_profiles()` and `load_profile_stages()` but reads old `flow.transitions` format (needs fix to use `load_profile()`)
-- ❌ No `--profile` flag in CLI
-- ❌ No profile selection UI in ConfigScreen
-- ⚠️ Integration progress: ~30%
+**Status:**
+- ✅ CLI: `--profile` flag implemented and passed to app
+- ✅ TUI: Profile selection dropdown in ConfigScreen, triggers reload
+- ✅ UI services: `discover_profiles()`, `load_profile_fields()`, `load_profile_defaults()`
+- ⚠️ `load_profile_stages()` still reads old `flow.transitions` format (for UI stage ordering only; not blocking)
+- ✅ Profile change handler in UI app updates available stages/fields/defaults
 
-- [ ] **Step 1: Write failing tests for profile selection**
+**Remaining:** Update `load_profile_stages()` to derive stage order from `profile.stages.keys()` instead of old flow DSL.
+
+**Tests:** All CLI and UI tests passing.
 
 Покрыть:
 - `devpipe run --profile <name>`
@@ -424,15 +432,28 @@ git commit -m "feat(ui): integrate profile selection into cli and textual tui"
 
 ---
 
-### Task 5: Profile-scoped history with stage attempts — ❌ NOT STARTED
+### Task 5: Profile-scoped history with stage attempts — ⚠️ IN PROGRESS (40%)
 
 **Files:**
-- Modify: `src/devpipe/history.py`
-- Modify: `src/devpipe/app.py`
-- Modify: `src/devpipe/ui/app.py`
-- Modify: `src/devpipe/ui/services.py`
-- Modify: `src/devpipe/ui/screens/history_screen.py`
-- Test: `tests/test_history.py`
+- Modified: `src/devpipe/history.py` (needs work)
+- Modified: `src/devpipe/app.py` (stage_attempts captured)
+- To modify: `src/devpipe/ui/app.py`, `src/devpipe/ui/screens/history_screen.py`
+- Test: `tests/test_history.py` (1 test, needs expansion)
+
+**Status:**
+- ✅ `PipelineState.stage_attempts` captures: `stage`, `attempt_number`, `in_snapshot`, `out_snapshot`, `selected_rule`, `next_stage` (app.py lines 259-271)
+- ❌ `save_run(config)` does **not** persist `stage_attempts` to history
+- ❌ `history.py` uses single file `~/.devpipecfg/history.yaml`, no profile scoping
+- ❌ `load_history()` returns all runs, no profile filtering
+- ❌ No separate history files per profile
+
+**Required:**
+1. Move stage_attempts from state to saved run record (pass `state` to `save_run()`)
+2. Change storage to `~/.devpipecfg/history/<profile>.yaml` or unified file with profile grouping
+3. Add `load_history(profile_name)` param
+4. Update TUI history screen to show attempts per run
+
+**Tests:** Existing test only covers finish_run timing; needs expansion for profile + attempts.
 
 - [ ] **Step 1: Write failing tests for profile-scoped history**
 

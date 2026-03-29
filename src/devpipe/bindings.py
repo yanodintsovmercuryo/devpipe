@@ -16,7 +16,7 @@ def resolve_bindings(bindings: dict[str, str], context: dict[str, Any]) -> dict[
             resolved[target] = resolve_source(source_path, context)
         except BindingError as e:
             raise BindingError(f"Failed to resolve binding '{target}' from '{source_path}': {e}") from e
-    return resolved
+    return nest_bindings(resolved)
 
 
 def _lookup_path(root: dict[str, Any], path: str) -> Any:
@@ -29,6 +29,30 @@ def _lookup_path(root: dict[str, Any], path: str) -> Any:
         else:
             return None
     return value
+
+
+def nest_bindings(flat: dict[str, Any]) -> dict[str, Any]:
+    """Convert flat dict with dotted keys into nested structure.
+
+    Example:
+        {"release_inputs.branch": "main", "release_inputs.target_branch": "dev"} ->
+        {"release_inputs": {"branch": "main", "target_branch": "dev"}}
+    """
+    nested: dict[str, Any] = {}
+    for flat_key, value in flat.items():
+        if "." not in flat_key:
+            nested[flat_key] = value
+            continue
+        parts = flat_key.split(".")
+        d = nested
+        for part in parts[:-1]:
+            if part not in d:
+                d[part] = {}
+            elif not isinstance(d[part], dict):
+                raise BindingError(f"Cannot nest under non-dict key '{part}' from '{flat_key}'")
+            d = d[part]
+        d[parts[-1]] = value
+    return nested
 
 
 def resolve_source(path: str, context: dict[str, Any]) -> Any:

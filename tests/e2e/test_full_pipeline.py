@@ -69,7 +69,7 @@ class FakeRunner:
 
 
 def test_full_pipeline_auto_runner_uses_role_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("devpipe.history.save_run", lambda _config: None)
+    monkeypatch.setattr("devpipe.history.save_run", lambda _config, _state: None)
     roles = _roles()
     roles["architect"].runner = "claude"
     codex_runner = FakeRunner()
@@ -116,7 +116,7 @@ def test_full_pipeline_auto_runner_uses_role_runner(tmp_path: Path, monkeypatch:
 
 
 def test_full_pipeline_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("devpipe.history.save_run", lambda _config: None)
+    monkeypatch.setattr("devpipe.history.save_run", lambda _config, _state: None)
     runner = FakeRunner()
     app = OrchestratorApp(
         roles=_roles(),
@@ -147,7 +147,7 @@ def test_full_pipeline_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_full_pipeline_fails_without_namespace_for_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("devpipe.history.save_run", lambda _config: None)
+    monkeypatch.setattr("devpipe.history.save_run", lambda _config, _state: None)
     app = OrchestratorApp(
         roles=_roles(),
         runners={"codex": FakeRunner()},
@@ -174,7 +174,7 @@ def test_full_pipeline_fails_without_namespace_for_release(tmp_path: Path, monke
 
 
 def test_full_pipeline_stops_on_github_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("devpipe.history.save_run", lambda _config: None)
+    monkeypatch.setattr("devpipe.history.save_run", lambda _config, _state: None)
     class FailingGitHub:
         def ensure_workflow_success(self, _run_id: str) -> None:
             raise RuntimeError("workflow failed")
@@ -205,7 +205,7 @@ def test_full_pipeline_stops_on_github_failure(tmp_path: Path, monkeypatch: pyte
 
 
 def test_full_pipeline_ignores_kubernetes_adapter_for_qa_stand(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("devpipe.history.save_run", lambda _config: None)
+    monkeypatch.setattr("devpipe.history.save_run", lambda _config, _state: None)
     class FailingKubernetes:
         def wait_until_ready(self, namespace: str, service: str, attempts: int = 10):
             raise RuntimeError(f"{namespace}/{service} not ready")
@@ -237,7 +237,7 @@ def test_full_pipeline_ignores_kubernetes_adapter_for_qa_stand(tmp_path: Path, m
 
 
 def test_full_pipeline_cancel_stops_without_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("devpipe.history.save_run", lambda _config: None)
+    monkeypatch.setattr("devpipe.history.save_run", lambda _config, _state: None)
 
     class CancelOnFirstRun:
         def __init__(self, app: OrchestratorApp) -> None:

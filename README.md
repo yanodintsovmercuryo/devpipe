@@ -270,3 +270,198 @@ devpipe/
     ├── integrations/       # Jira, GitHub, Kubernetes, Git
     └── storage/            # логи и артефакты запусков
 ```
+
+---
+
+## Pipeline Profiles (новый способ)
+
+`devpipe` теперь использует **profile-driven** архитектуру: вместо жёстко зашитых ролей `STAGE_ORDER` пайплайн описывается декларативно в YAML-файлах.
+
+### Структура профиля
+
+Профиль — это директория `.devpipe/profiles/<profile_name>/` (проектный) или `src/devpipe/profiles/<profile_name>/` (встроенный в репозиторий). Обязательный файл: `pipeline.yml`.
+
+```
+.devpipe/
+  profiles/
+    my-profile/
+      pipeline.yml
+      agents/
+        architect/
+          prompt.md
+          output.schema.json
+        developer/
+          ...
+```
+
+### pipeline.yml DSL
+
+**Минимальный контракт:**
+
+```yaml
+version: 1
+name: my-profile
+
+defaults:
+  runner: auto
+  model: middle
+  effort: middle
+
+inputs:
+  <input_key>:
+    type: string | int | array | object | bool
+    required: true | false
+    default: <scalar-or-list>
+    values: [<enum-values>]        # если custom=false
+    multi: true | false            # для arrays
+    custom: true | false           # разрешать произвольные значения
+
+stages:
+  <stage_name>:
+    runner: codex | claude | auto
+    model: low | middle | high | auto
+    effort: low | middle | high | extra | auto
+    retry_limit: <int>
+    agent:
+      prompt: agents/<stage_name>/prompt.md
+      output_schema: agents/<stage_name>/output.schema.json
+    in:
+      <target>: <source_path>
+      ...
+    out:
+      <field>:
+        type: string | int | bool | object | array
+        description: optional
+      ...
+
+routing:
+  start_stage: <stage_name>
+  by_stage:
+    <stage_name>:
+      next_stages:
+        - stage: <next_stage_name>
+          all:      # все условия должны совпасть
+            - field: <field_ref>
+              op: eq | neq | gt | gte | lt | lte | in | contains
+              value: <value>
+          any:      # хотя бы одно условие
+            - ...
+          default: true   # правило по умолчанию (первое)
+```
+
+### Выбор профиля
+
+1. **CLI**: `devpipe run --profile <name> ...`
+2. **TUI**: В Configuration Screen появится поле `Profile`. Выбор профиля перезагружает список Stages и Inputs.
+3. **Проектный конфиг**: `.devpipe/config.yaml` → `defaults.profile: <name>`
+
+Если профиль не указан — используется builtin `default` (если есть) или fallback на legacy `STAGE_ORDER`.
+
+### Входы (`inputs`)
+
+Определяют поля, которые пользователь заполняет в конфигурации:
+- `type` — тип значения.
+- `required` — если true, поле должно быть заполнено.
+- `default` — значение по умолчанию.
+- `values` — список разрешённых значений (только если `custom: false`).
+- `multi: true` — поле принимает список (для `type: array`).
+- `custom: true` — любое значение указанного типа (обход `values`).
+
+Пример:
+
+```yaml
+inputs:
+  environment:
+    type: string
+    required: false
+    default: "staging"
+    values: ["development", "staging", "production"]
+    custom: false
+  components:
+    type: array
+    required: false
+    default: []
+    multi: true
+    custom: true
+```
+
+### Стадии (`stages`)
+
+Каждая стадия описывает конфигурацию агента:
+- `runner`, `model`, `effort`, `retry_limit`.
+- `agent.prompt` и `agent.output_schema` — файлы внутри профиля.
+- `in.bindings` — откуда брать входные данные для этой стадии.
+- `out.fields` — какие поля возвращает агент (для валидации и последующих bindings).
+
+**Bindings** (`in`): маппинг целевых имен на источники:
+
+- `input.<key>` — глобальный вход профиля.
+- `stage.<stage_name>.out.<field>` — выход другой стадии.
+- `context.shared` — общий контекст (например, дата создания).
+- `runtime.git.current_branch` — текущая ветка.
+- `integration.jira.issue` — данные из Jira (если адаптер есть).
+
+Использование точечной нотации в целевом ключе создаёт вложенные структуры:
+
+```yaml
+in:
+  release_inputs.branch: runtime.git.current_branch
+  release_inputs.target_branch: input.target_branch
+```
+→ в контексте стадии будет `release_inputs: { branch: "...", target_branch: "..." }`.
+
+**Outputs** (`out`): описывает возвращаемые поля агента:
+
+```yaml
+out:
+  build_id:
+    type: string
+    description: "ID сборки"
+  artifacts:
+    type: object
+```
+
+### Маршрутизация (`routing`)
+
+Определяет, как пайплайн переходит между стадиями:
+- `start_stage` — с какой стадии начинать.
+- `by_stage.<stage>.next_stages` — список правил, проверяемых сверху вниз. Первое совпавшее правило выбирает следующую стадию.
+
+Правило содержит:
+- `stage` — следующая стадия (`completed` или `failed` — специальные финальные состояния).
+- `all` или `any` — условия (можно не указывать для `default: true`).
+- `default: true` — правило по умолчанию (если ни одно не сработало).
+
+**Операторы:** `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in` (значение в списке), `contains` (подстрока или элемент списка).
+
+**Поля условий** (`field`):
+- `input.<key>` — вход профиля.
+- `in.<key>` — синоним `input.`.
+- `out.<field>` — выход текущей стадии.
+- `stage.<stage>.out.<field>` — выход конкретной стадии.
+- `context.<key>` — общий контекст.
+- `runtime.<key>` — runtime-информация.
+- `integration.<key>` — данные интеграций.
+
+### Пример профиля: acquiring-service
+
+См. `examples/acquiring/.devpipe/profiles/acquiring-service/pipeline.yml`. Профиль демонстрирует:
+- Тиражированные входы с `values`, `multi`, `custom`.
+- Вложенные bindings `release_inputs.branch`.
+- Условную маршрутизацию `all` / `any`.
+- Линейный этап и возврат на доработку (`quality_gate → builder`).
+
+### Builtin профили
+
+Встроенные профили находятся в `src/devpipe/profiles/`. Профиль `default` используется, если проект не имеет своего.
+
+---
+
+## Примечание по миграции
+
+Старая система жёстко зашитых ролей (`roles/`, `tags/`, `STAGE_ORDER`) сохранена для совместимости, но новая рекомендуется. При использовании профиля:
+- TUI строит конфигурацию из `inputs` профиля.
+- Стадии берутся из `stages`.
+- Переходы вычисляются по `routing` (не по `on_success/on_failure`).
+- История сохраняется отдельно на каждый профиль и включает цепочку попыток (`stage_attempts`).
+

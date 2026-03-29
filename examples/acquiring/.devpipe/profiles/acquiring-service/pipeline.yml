@@ -1,0 +1,160 @@
+version: 1
+name: acquiring-service
+
+defaults:
+  runner: auto
+  model: middle
+  effort: middle
+
+inputs:
+  task:
+    type: string
+    required: true
+    default: ""
+    custom: true
+  environment:
+    type: string
+    required: false
+    default: "staging"
+    values: ["development", "staging", "production"]
+    custom: false
+  components:
+    type: array
+    required: false
+    default: []
+    multi: true
+    custom: true
+  extra_tags:
+    type: array
+    required: false
+    default: []
+    multi: true
+    custom: true
+  extra_params:
+    type: object
+    required: false
+    default: {}
+    custom: true
+
+stages:
+  builder:
+    runner: codex
+    model: middle
+    effort: high
+    retry_limit: 2
+    agent:
+      prompt: agents/builder/prompt.md
+      output_schema: agents/builder/output.schema.json
+    in:
+      task: input.task
+      components: input.components
+      shared_context: context.shared
+    out:
+      build_id:
+        type: string
+      artifacts:
+        type: object
+      tests_passed:
+        type: bool
+
+  tester:
+    runner: codex
+    model: middle
+    effort: high
+    retry_limit: 1
+    agent:
+      prompt: agents/tester/prompt.md
+      output_schema: agents/tester/output.schema.json
+    in:
+      task: input.task
+      build_id: stage.builder.out.build_id
+      artifacts: stage.builder.out.artifacts
+      shared_context: context.shared
+    out:
+      test_summary:
+        type: object
+      all_tests_passed:
+        type: bool
+      defects_found:
+        type: int
+
+  quality_gate:
+    runner: codex
+    model: low
+    effort: low
+    retry_limit: 1
+    agent:
+      prompt: agents/quality_gate/prompt.md
+      output_schema: agents/quality_gate/output.schema.json
+    in:
+      task: input.task
+      test_summary: stage.tester.out.test_summary
+      build_artifacts: stage.builder.out.artifacts
+      environment: input.environment
+      shared_context: context.shared
+    out:
+      approved:
+        type: bool
+      comments:
+        type: string
+      required_tests:
+        type: int
+
+  deploy:
+    runner: codex
+    model: low
+    effort: low
+    retry_limit: 1
+    agent:
+      prompt: agents/deploy/prompt.md
+      output_schema: agents/deploy/output.schema.json
+    in:
+      task: input.task
+      build_id: stage.builder.out.build_id
+      environment: input.environment
+      approval: stage.quality_gate.out.approved
+      shared_context: context.shared
+    out:
+      deployment_id:
+        type: string
+      status:
+        type: string
+
+routing:
+  start_stage: builder
+  by_stage:
+    builder:
+      next_stages:
+        - stage: tester
+          default: true
+    tester:
+      next_stages:
+        - stage: quality_gate
+          default: true
+    quality_gate:
+      next_stages:
+        - stage: deploy
+          all:
+            - field: out.approved
+              op: eq
+              value: true
+            - field: out.required_tests
+              op: eq
+              value: 0
+        - stage: builder
+          any:
+            - field: out.approved
+              op: eq
+              value: false
+            - field: out.defects_found
+              op: gt
+              value: 0
+            - field: out.required_tests
+              op: gt
+              value: 0
+        - stage: completed
+          default: true
+    deploy:
+      next_stages:
+        - stage: completed
+          default: true

@@ -13,6 +13,7 @@ class InputType(str, Enum):
     INT = "int"
     BOOL = "bool"
     OBJECT = "object"
+    ARRAY = "array"
 
 
 class InputSpec(BaseModel):
@@ -70,9 +71,10 @@ class StageInBinding(BaseModel):
     @classmethod
     def validate_binding_paths(cls, v: dict[str, str]) -> dict[str, str]:
         """Validate binding source paths."""
+        allowed_prefixes = ("input.", "context.", "stage.", "runtime.", "integration.")
         for source in v.values():
-            if not source.startswith(("input.", "context.", "stage.", "runtime.")):
-                raise ValueError(f"Invalid binding source: {source}. Must start with input., context., stage., or runtime.")
+            if not source.startswith(allowed_prefixes):
+                raise ValueError(f"Invalid binding source: {source}. Must start with {', '.join(allowed_prefixes)}")
         return v
 
 
@@ -207,5 +209,7 @@ def _check_type(value: Any, type_name: InputType) -> bool:
     if type_name == InputType.BOOL:
         return isinstance(value, bool)
     if type_name == InputType.OBJECT:
-        return isinstance(value, (dict, list))
+        return isinstance(value, dict)
+    if type_name == InputType.ARRAY:
+        return isinstance(value, list)
     return False

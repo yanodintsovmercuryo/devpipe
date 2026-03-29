@@ -126,7 +126,9 @@ class HistoryScreen(Screen):
         yield HistoryStatusBar()
 
     def on_mount(self) -> None:
-        entries = load_history()[:20]
+        # Load history for the currently selected profile
+        profile = self._state.form.profile if self._state else None
+        entries = load_history(profile=profile)[:20]
         hist_list = self.query_one("#history-list", HistoryList)
         hist_list.set_entries(entries)
         if entries:

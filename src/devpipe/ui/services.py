@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 
 from devpipe.project_config import load_project_config
+from devpipe.profiles.loader import load_profile
 from devpipe.runtime.state import STAGE_ORDER
 from devpipe.tags import collect_params, load_available_tags, load_tag_definitions
 from devpipe.ui.state import FieldKind, FieldMeta
@@ -61,29 +62,14 @@ def load_profile_defaults(profile_name: str, project_root: Path | None = None) -
 
 
 def load_profile_stages(profile_name: str, project_root: Path | None = None) -> list[str]:
-    """Extract ordered stage list from profile's flow definition."""
+    """Extract ordered stage list from profile definition using the new DSL."""
     root = project_root or Path.cwd()
-    pipeline_path = root / ".devpipe" / "profiles" / profile_name / "pipeline.yml"
-    if not pipeline_path.exists():
+    try:
+        profile = load_profile(profile_name, project_root=root)
+        return list(profile.stages.keys())
+    except Exception:
+        # Fall back to empty list if profile can't be loaded
         return []
-    data = yaml.safe_load(pipeline_path.read_text(encoding="utf-8")) or {}
-
-    flow = data.get("flow", {})
-    transitions = flow.get("transitions", {})
-    start = flow.get("start")
-    if not start or not transitions:
-        return list(data.get("roles", {}).keys())
-
-    # Walk the flow graph to get ordered stages
-    ordered: list[str] = []
-    current = start
-    visited: set[str] = set()
-    while current and current not in {"completed", "failed"} and current not in visited:
-        visited.add(current)
-        ordered.append(current)
-        trans = transitions.get(current, {})
-        current = trans.get("on_success")
-    return ordered
 
 
 # Keys managed in the Standard section; exclude from Custom

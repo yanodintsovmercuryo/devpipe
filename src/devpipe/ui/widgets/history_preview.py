@@ -59,6 +59,25 @@ class HistoryPreview(Widget):
         lines.append(f"   Started: {format_snapshot_value(entry.get('date', ''))}")
         lines.append(f"   Finished: {format_snapshot_value(entry.get('finished_at', ''))}")
 
+        # Show stage attempts if available
+        attempts = entry.get("attempts", [])
+        if attempts:
+            lines.append("\n[dim]── Stage Attempts ──[/dim]")
+            for att in attempts:
+                stage = att.get("stage", "?")
+                attempt_num = att.get("attempt_number", 1)
+                next_stage = att.get("next_stage", "")
+                rule_desc = ""
+                rule = att.get("selected_rule", {})
+                if rule:
+                    if rule.get("default"):
+                        rule_desc = "(default)"
+                    elif rule.get("conditions"):
+                        conds = rule["conditions"]
+                        # Simple representation
+                        rule_desc = f"({conds})"
+                lines.append(f"   {stage} #{attempt_num} → {next_stage} {rule_desc}")
+
         self._markup = "\n".join(lines)
         self.refresh()
 

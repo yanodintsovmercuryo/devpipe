@@ -57,7 +57,7 @@ def _create_profile_with_yaml(tmp_dir: Path, pipeline_data: dict) -> "ProfileDef
 
 def test_linear_routing_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that profile with linear routing executes stages in order."""
-    monkeypatch.setattr("devpipe.history.save_run", lambda _config: None)
+    monkeypatch.setattr("devpipe.history.save_run", lambda _config, _state: None)
     pipeline = {
         "version": 1,
         "name": "linear-test",
@@ -114,7 +114,7 @@ def test_linear_routing_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 def test_branching_routing_based_on_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test routing that branches based on stage output."""
-    monkeypatch.setattr("devpipe.history.save_run", lambda _config: None)
+    monkeypatch.setattr("devpipe.history.save_run", lambda _config, _state: None)
     pipeline = {
         "version": 1,
         "name": "branch-test",
