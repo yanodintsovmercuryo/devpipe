@@ -13,6 +13,7 @@ from devpipe.runtime.retry import RetryPolicy
 from devpipe.runtime.state import STAGE_ORDER, PipelineState
 from devpipe.runners.claude import ClaudeRunner
 from devpipe.runners.codex import CodexRunner
+from devpipe.bindings import BindingError, resolve_bindings
 from devpipe.profiles.loader import ProfileDefinition
 from devpipe.runners.profile_map import (
     RunnerProfiles,
@@ -110,8 +111,17 @@ class OrchestratorApp:
             selected_runner=config.runner,
             routing=self.profile.routing if self.profile else None,
         )
-        # Populate top-level inputs and integration/runtime contexts
-        state.inputs = config.extra_params or {}
+        # Populate top-level inputs (available via input.<key>)
+        # Includes both standard CLI parameters and extra params
+        state.inputs = {
+            "task": config.task,
+            "task_id": config.task_id or "",
+            "target_branch": config.target_branch or "",
+            "namespace": config.namespace or "",
+            "service": config.service or "",
+            "tags": config.tags or [],
+            **(config.extra_params or {}),
+        }
         state.release_context.update({**(config.extra_params or {})})
 
         # Runtime info
@@ -151,24 +161,47 @@ class OrchestratorApp:
                 resolved_effort = resolve_effort(self.runner_profiles, actual_runner_name, effort_level)
                 runner.model_name = resolved_model
                 runner.effort = resolved_effort
-                stage_context: dict[str, object] = {"config": config.__dict__}
-                if state.current_stage == "release":
-                    if not config.target_branch:
-                        raise ValueError("target_branch must be provided for release stage")
-                    if not config.namespace:
-                        raise ValueError("namespace must be provided for release stage")
-                    if not config.service:
-                        raise ValueError("service must be provided for release stage")
-                    current_branch = getattr(self.git_adapter, "current_branch", lambda: None)() if self.git_adapter is not None else None
-                    stage_context["release_inputs"] = {
-                        "branch": current_branch,
-                        "target_branch": config.target_branch,
-                        "namespace": config.namespace,
-                        "service": config.service,
-                        **(config.extra_params or {}),
-                    }
+                # Build stage context based on profile bindings (if available)
+                if self.profile:
+                    stage_spec = self.profile.stages.get(state.current_stage)
+                    if stage_spec and stage_spec.in_:
+                        # Build resolver context from state
+                        resolver_context = {
+                            "inputs": state.inputs,
+                            "stages": state.artifacts.get("stage_outputs", {}),
+                            "context": state.shared_context,
+                            "runtime": state.runtime,
+                            "integration": state.integration,
+                            "_current_stage": state.current_stage,
+                        }
+                        try:
+                            resolved = resolve_bindings(stage_spec.in_.bindings, resolver_context)
+                        except BindingError as e:
+                            raise RuntimeError(f"Binding resolution failed for stage '{state.current_stage}': {e}") from e
+                        stage_context = {"config": config.__dict__, **resolved}
+                    else:
+                        # No explicit bindings; provide just config
+                        stage_context = {"config": config.__dict__}
+                else:
+                    # Legacy mode: hardcoded context with release special handling
+                    stage_context = {"config": config.__dict__}
+                    if state.current_stage == "release":
+                        if not config.target_branch:
+                            raise ValueError("target_branch must be provided for release stage")
+                        if not config.namespace:
+                            raise ValueError("namespace must be provided for release stage")
+                        if not config.service:
+                            raise ValueError("service must be provided for release stage")
+                        current_branch = getattr(self.git_adapter, "current_branch", lambda: None)() if self.git_adapter is not None else None
+                        stage_context["release_inputs"] = {
+                            "branch": current_branch,
+                            "target_branch": config.target_branch,
+                            "namespace": config.namespace,
+                            "service": config.service,
+                            **(config.extra_params or {}),
+                        }
 
-                # Capture stage inputs for attempt tracking
+                # Capture stage inputs for attempt tracking (before runner execution)
                 state._current_stage_inputs = stage_context.copy()
 
                 envelope = build_envelope(
